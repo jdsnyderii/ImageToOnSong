@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.imagetoonsong.controller.MainController"
+            prefWidth="1280" prefHeight="820">
+
+    <top>
+        <VBox>
+            <MenuBar>
+                <Menu text="File">
+                    <MenuItem text="Open Image..." fx:id="openFileMenuItem" onAction="#openImage"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Exit" fx:id="exitMenuItem" onAction="#handleExit"/>
+                </Menu>
+                <Menu text="Help">
+                    <MenuItem text="About" fx:id="aboutMenuItem" onAction="#handleAboutAction"/>                </Menu>
+            </MenuBar>
+            <ToolBar>
+                <Button text="📤 Upload Image" fx:id="uploadButton" prefWidth="140"/>
+                <Button text="🔄 Convert to OnSong" fx:id="convertButton" prefWidth="160" style="-fx-font-weight: bold;"/>
+                <Separator orientation="VERTICAL"/>
+                <Label text="Output Style:"/>
+                <ComboBox fx:id="styleCombo" prefWidth="200" value="Bracketed Chords [C]"/>
+            </ToolBar>
+        </VBox>
+    </top>
+
+    <center>
+        <SplitPane dividerPositions="0.45">
+            <!-- Left: Image Preview -->
+            <VBox spacing="10">
+                <padding>
+                    <Insets top="10" right="10" bottom="10" left="10"/>
+                </padding>
+                <Label text="Original Chord Sheet Image" style="-fx-font-weight: bold;"/>
+                <ScrollPane fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER" vbarPolicy="ALWAYS">
+                    <ImageView fx:id="imageView" preserveRatio="true"/>
+                </ScrollPane>
+                <Label fx:id="imageInfoLabel" text="No image loaded" style="-fx-font-style: italic;"/>
+            </VBox>
+
+            <!-- Right: OnSong Output -->
+            <VBox spacing="10">
+                <padding>
+                    <Insets top="10" right="10" bottom="10" left="10"/>
+                </padding>
+                <Label text="OnSong Bracketed Output" style="-fx-font-weight: bold;"/>
+                <TextArea fx:id="resultTextArea"
+                          promptText="Converted OnSong text will appear here..."
+                          style="-fx-font-family: 'Courier New', monospace; -fx-font-size: 14;"
+                          VBox.vgrow="ALWAYS"/>
+
+                <HBox spacing="10" alignment="CENTER_RIGHT">
+                    <Button text="📋 Copy to Clipboard" fx:id="copyButton"/>
+                    <Button text="📥 Download .onsong" fx:id="downloadButton" style="-fx-font-weight: bold;"/>
+                </HBox>
+            </VBox>
+        </SplitPane>
+    </center>
+
+    <bottom>
+        <HBox spacing="10" alignment="CENTER_LEFT">
+            <padding>
+                <Insets top="8" right="10" bottom="8" left="10"/>
+            </padding>
+            <Label fx:id="statusLabel" text="Ready" style="-fx-font-weight: bold;"/>
+            <ProgressIndicator fx:id="progressIndicator" visible="false"/>
+        </HBox>
+    </bottom>
+</BorderPane>
