@@ -2,6 +2,8 @@ package com.imagetoonsong.core;
 
 import com.imagetoonsong.MainApp;
 import org.bytedeco.javacpp.BytePointer;
+import org.bytedeco.opencv.opencv_core.Point;
+import org.bytedeco.opencv.opencv_core.Scalar;
 import org.bytedeco.tesseract.TessBaseAPI;
 import org.bytedeco.javacv.Java2DFrameConverter;
 import org.bytedeco.javacv.OpenCVFrameConverter;
@@ -9,6 +11,7 @@ import org.bytedeco.tesseract.global.tesseract;
 
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.bytedeco.opencv.opencv_core.Size;
+import org.w3c.dom.NodeList;
 
 import static org.bytedeco.opencv.global.opencv_core.*;
 import static org.bytedeco.opencv.global.opencv_imgproc.*;
@@ -16,6 +19,10 @@ import static org.bytedeco.opencv.global.opencv_imgproc.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.metadata.IIOMetadata;
+import javax.imageio.metadata.IIOMetadataNode;
+import javax.imageio.stream.ImageInputStream;
 
 import java.io.InputStream;
 import java.io.IOException;
@@ -24,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.stream.Stream;
 
 public class OcrProcessor {
@@ -50,6 +58,16 @@ public class OcrProcessor {
         api.SetVariable("tessedit_create_hocr", "1");
         api.SetVariable("load_system_dawg", "0");
         api.SetVariable("load_freq_dawg", "0");
+        api.SetVariable("tessedit_minimal_rejection", "1");
+        api.SetVariable("user_defined_dpi", "300");
+        api.SetVariable("edges_min_nonhole", "2");    // accept very small connected components
+        api.SetVariable("textord_min_linesize", "0.5"); // don't skip short/narrow text regions
+        api.SetVariable("textord_noise_rejrows", "0");    // don't reject sparse rows
+        api.SetVariable("textord_noise_sncount", "1");      // default is 4 (!)
+        api.SetVariable("textord_noise_rejrows", "0");
+        api.SetVariable("textord_noise_sizelimit", "0.01"); // lower minimum blob size
+        api.SetVariable("textord_noise_normratio", "0.0");
+        api.SetVariable("edges_max_children_per_outline", "40"); // allow simpler shapes
         api.SetVariable("tessedit_char_whitelist",
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" +
                         "0123456789#/()[]., '-{}");
@@ -57,15 +75,28 @@ public class OcrProcessor {
 
         // Read and set image
         BufferedImage bufferedImage = ImageIO.read(imageFile);
-
+        int dpi = estimateDpi(bufferedImage);
+        api.SetVariable("user_defined_dpi", String.valueOf(dpi));
+        System.out.printf("Using DPI: %d%n", dpi); // log it so you can verify
         // Standard JavaCV bridge
         Java2DFrameConverter biConverter = new Java2DFrameConverter();
         OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
 
         Mat mat = matConverter.convert(biConverter.convert(bufferedImage));
         Mat processed = preprocessImage(mat);  // <-- add this
+        // ── Pad right edge to prevent isolated right-margin chords being dropped ────
+        Mat padded = new Mat();
 
-        api.SetImage(processed.data(), processed.cols(), processed.rows(), processed.channels(), (int)processed.step());
+        int paddingPx = processed.cols() / 3; // add 33% of image width
+        int paddingSmall = 0;
+        copyMakeBorder(processed, padded,
+                paddingSmall, paddingSmall, paddingSmall, paddingPx,          // top, bottom, left, right
+                BORDER_CONSTANT,
+                new Scalar(255, 255, 255, 255));
+        processed.release();
+
+        api.SetImage(padded.data(), padded.cols(), padded.rows(),
+                padded.channels(), (int) padded.step());
 
         // Run OCR
         BytePointer outText = api.GetHOCRText(0);
@@ -134,6 +165,36 @@ public class OcrProcessor {
         return binary;
     }
 
+    protected int estimateDpi(BufferedImage originalImage) {
+        // Step 1: get the DPI baked into the image metadata
+        int sourceDpi = originalImage.getWidth(); // placeholder — see below
+
+        // The real way — read it from the image metadata
+        try {
+            ImageInputStream iis = ImageIO.createImageInputStream(originalImage);
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (readers.hasNext()) {
+                ImageReader reader = readers.next();
+                reader.setInput(iis);
+                IIOMetadata metadata = reader.getImageMetadata(0);
+                IIOMetadataNode root = (IIOMetadataNode)
+                        metadata.getAsTree("javax_imageio_1.0");
+                NodeList horiz = root.getElementsByTagName("HorizontalPixelSize");
+                if (horiz.getLength() > 0) {
+                    // HorizontalPixelSize is in mm/pixel — convert to DPI
+                    float mmPerPixel = Float.parseFloat(
+                            ((IIOMetadataNode) horiz.item(0)).getAttribute("value"));
+                    sourceDpi = Math.round(25.4f / mmPerPixel);
+                }
+            }
+        } catch (Exception e) {
+            sourceDpi = 96; // safe fallback for screen-captured images
+        }
+
+        // Step 2: multiply by your upscale factor
+        int scaleFactor = 3; // your current resize multiplier
+        return sourceDpi * scaleFactor;
+    }
 
     /**
      * Prepares a temporary tessdata directory for Bytedeco Tesseract.

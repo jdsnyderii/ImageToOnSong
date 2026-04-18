@@ -2,6 +2,7 @@ package com.imagetoonsong.core;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 public class OnSongBuilder {
 
@@ -48,10 +49,35 @@ public class OnSongBuilder {
             }
         }
 
+        return flagIncompleteLines(sb.toString());
+    }
+
+    private static String flagIncompleteLines(String onSongText) {
+        String[] lines = onSongText.split("\n");
+        Pattern hasChord = Pattern.compile("\\[[A-G][^\\]]*]");
+        StringBuilder sb = new StringBuilder();
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            boolean prevHasChord = i > 0 && hasChord.matcher(lines[i - 1]).find();
+            boolean nextHasChord = i < lines.length - 1 && hasChord.matcher(lines[i + 1]).find();
+            boolean thisHasChord = hasChord.matcher(line).find();
+            boolean isSectionHeader = isSectionHeader(line);
+            boolean isBlank = line.isBlank();
+
+            if (!isSectionHeader && !isBlank && !thisHasChord && (prevHasChord || nextHasChord)) {
+                sb.append(line).append("  ← ⚠️ possible missing chord\n");
+            } else {
+                sb.append(line).append("\n");
+            }
+        }
         return sb.toString();
     }
 
-
+    private static boolean isSectionHeader(String line) {
+        return line.matches(
+                "(?i)^(Verse|Chorus|Bridge|Intro|Outro|Pre-?Chorus|Tag|Interlude).*:$");
+    }
     private static String normalizeSection(String raw) {
         if (raw == null || raw.isBlank()) return raw;
 
