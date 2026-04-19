@@ -5,7 +5,7 @@ import java.util.regex.Pattern;
 public class ChordDetector {
 
     // Robust regex for common guitar/piano chords: C, Am7, F#, G/B, Dsus4, C#m7b5, etc.
-    private static final Pattern CHORD_PATTERN = Pattern.compile(
+    public static final Pattern CHORD_PATTERN = Pattern.compile(
             "\\b([A-G])(#{1,2}|b{1,2})?(m|min|maj|sus|sus4|dim|aug|add|ø|°)?\\d?/?[A-G]?[b#]?\\d?\\b",
             Pattern.CASE_INSENSITIVE
     );

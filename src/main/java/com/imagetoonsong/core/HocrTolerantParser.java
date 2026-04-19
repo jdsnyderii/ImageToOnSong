@@ -1,5 +1,6 @@
 package com.imagetoonsong.core;
 
+import static com.imagetoonsong.core.ChordDetector.CHORD_PATTERN;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -14,9 +15,9 @@ public class HocrTolerantParser {
     private static final int Y_TOLERANCE = 12;
 
     /** Regex to recognise a chord token (e.g. A, Bm, C#7, Dsus4, F/A, G/B).    */
-    private static final Pattern CHORD_RE = Pattern.compile(
-            "^[A-G][b#]?(m|maj|min|aug|dim|sus|add)?\\d*((\\/[A-G][b#]?)?)$"
-    );
+//    private static final Pattern CHORD_RE = Pattern.compile(
+//            "^[A-G][b#]?(m|maj|min|aug|dim|sus|add)?\\d*((\\/[A-G][b#]?)?)$"
+//    );
 
     // ── Public entry-point ──────────────────────────────────────────────────────
 
@@ -99,16 +100,6 @@ public class HocrTolerantParser {
 
         return lines;
     }
-
-    // ── Step 4 : OnSong rendering ───────────────────────────────────────────────
-    //
-    // OnSong chord-over-lyric format:
-    //
-    //   G         Em
-    //   Hey Jude, don't make it bad
-    //
-    // Chord tokens are placed inline using [Chord] notation (OnSong also
-    // supports that style, and it is far more robust than whitespace alignment).
 
     private static String renderOnSong(List<LogicalLine> lines) {
         StringBuilder sb = new StringBuilder();
@@ -221,7 +212,7 @@ public class HocrTolerantParser {
         for (Map.Entry<String, String> e : OCR_CORRECTIONS.entrySet()) {
             s = s.replace(e.getKey(), e.getValue());
         }
-        // Capitalise first letter — fixes c7 → C7
+        // Capitalize first letter — fixes c7 → C7
         if (!s.isEmpty() && Character.isLowerCase(s.charAt(0))) {
             s = Character.toUpperCase(s.charAt(0)) + s.substring(1);
         }
@@ -239,7 +230,7 @@ public class HocrTolerantParser {
     /** Returns true when most tokens on the line look like chord names. */
     private static boolean isChordLine(LogicalLine line) {
         long chordCount = line.words.stream()
-                .filter(w -> CHORD_RE.matcher(normalizeChordToken(w.text)).matches())
+                .filter(w -> CHORD_PATTERN.matcher(normalizeChordToken(w.text)).matches())
                 .count();
         // Majority vote – allows one mis-OCR'd token without flipping the verdict
         return chordCount > 0 && chordCount >= (line.words.size() + 1) / 2;
