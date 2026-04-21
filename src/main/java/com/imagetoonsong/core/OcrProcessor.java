@@ -11,7 +11,7 @@ import org.bytedeco.javacv.Java2DFrameConverter;
 import org.bytedeco.javacv.OpenCVFrameConverter;
 import org.bytedeco.tesseract.global.tesseract;
 import org.bytedeco.javacpp.BytePointer;
-import org.bytedeco.javacpp.indexer.IntIndexer;          // ← NEW
+import org.bytedeco.javacpp.indexer.IntIndexer;
 
 import java.io.File;
 import java.io.InputStream;
@@ -20,10 +20,10 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;                              // ← NEW
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
-import java.util.List;                                   // ← NEW
+import java.util.List;
 import java.util.stream.Stream;
 import org.w3c.dom.NodeList;
 import java.awt.image.BufferedImage;
@@ -41,7 +41,7 @@ public class OcrProcessor {
     private static final double ANGLE_THRESHOLD_DEGREES = 83.0;
 
     // ════════════════════════════════════════════════════════════════════════
-    // EXISTING METHOD — unchanged
+    // MAIN OCR PIPELINE — unchanged from original
     // ════════════════════════════════════════════════════════════════════════
 
     public String extractText(File imageFile) throws Exception, UncheckedIOException {
@@ -116,53 +116,63 @@ public class OcrProcessor {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // NEW METHOD — detects '|' vs '/' by stroke angle
+    // BARLINE PATTERN DETECTION — primary Mat-based entry point
+    //
+    // Changes from original:
+    //  - Primary method now accepts a Mat directly instead of a File.
+    //    This eliminates the disk round-trip (write crop → read back) when
+    //    called from within the OCR pipeline where Mat data is already in memory.
+    //  - The File-based overload is retained for backward compatibility and
+    //    standalone use; it now delegates to the Mat-based method.
+    //  - No logic changes — same Hough angle classification as before.
     // ════════════════════════════════════════════════════════════════════════
 
     /**
      * Detects and distinguishes '|' (bar lines) from '/' (beat strokes) on a
      * single strumming-pattern line, e.g.:  | D / / / / / / |
      *
+     * Accepts a Mat directly — caller should crop to a single line before
+     * passing. The Mat may be colour or greyscale; conversion is handled internally.
+     *
      * Strategy:
-     *  1. Upscale 2× with Lanczos4 so thin strokes have enough pixels to
-     *     express their angle clearly.
-     *  2. Binarise with Otsu's thresholding.
+     *  1. Convert to greyscale if needed, then upscale 2× with Lanczos4.
+     *  2. Binarise with Otsu's threshold (THRESH_BINARY_INV — strokes are white).
      *  3. connectedComponentsWithStats → one blob per character.
-     *  4. HoughLinesP on each blob → measure average stroke angle.
+     *  4. HoughLinesP per blob → measure average stroke angle.
      *       '|'  ≈ 90° from horizontal  (near-vertical)
      *       '/'  ≈ 60–75° from horizontal (diagonal)
-     *  5. Return the sequence as a String and optionally save an annotated
-     *     debug image (green boxes for '|', blue for '/').
+     *  5. Sort left-to-right and return the sequence as a String.
      *
-     * Crop your input to a single line before calling this for best results.
-     *
-     * @param imageFile  Input image file (single strumming-pattern line)
-     * @param outputFile If non-null, an annotated debug PNG is written here
-     * @return           Detected character sequence, e.g. "|////|"
+     * @param lineRegion  Input Mat cropped to a single strumming-pattern line
+     * @param outputFile  If non-null, an annotated debug PNG is written here
+     *                    (green boxes for '|', blue for '/')
+     * @return            Detected character sequence, e.g. "|////|"
      */
-    public String detectBarlinePattern(File imageFile, File outputFile) throws Exception {
+    public String detectBarlinePattern(Mat lineRegion, File outputFile) throws Exception {
 
-        // ── Load ─────────────────────────────────────────────────────────
-        BufferedImage bufferedImage = ImageIO.read(imageFile);
-        Java2DFrameConverter biConverter   = new Java2DFrameConverter();
+        Java2DFrameConverter biConverter       = new Java2DFrameConverter();
         OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
-        Mat mat = matConverter.convert(biConverter.convert(bufferedImage));
 
-        // ── Upscale 2× with Lanczos4 ─────────────────────────────────────
-        // Using 2× here (not 3×) because we only need enough pixels per
-        // glyph to measure angle — we are NOT feeding this into Tesseract.
+        // ── Greyscale conversion ──────────────────────────────────────────
         Mat gray       = new Mat();
         Mat upscaled   = new Mat();
         Mat normalized = new Mat();
         Mat binary     = new Mat();
 
-        cvtColor(mat, gray, COLOR_BGR2GRAY);
+        if (lineRegion.channels() == 1) {
+            lineRegion.copyTo(gray);
+        } else {
+            cvtColor(lineRegion, gray, COLOR_BGR2GRAY);
+        }
+
+        // ── Upscale 2× with Lanczos4 ─────────────────────────────────────
+        // 2× (not 3×) — we only need enough pixels to measure angle,
+        // we are NOT feeding this into Tesseract.
         resize(gray, upscaled,
                 new Size(gray.cols() * 2, gray.rows() * 2),
                 0, 0,
                 INTER_LANCZOS4);
 
-        // Normalise contrast before thresholding
         normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
 
         // THRESH_BINARY_INV so strokes are white (foreground) on black
@@ -170,7 +180,7 @@ public class OcrProcessor {
 
         // ── Connected components ──────────────────────────────────────────
         Mat labels    = new Mat();
-        Mat stats     = new Mat();   // CV_32S, shape [numLabels × 5]
+        Mat stats     = new Mat();
         Mat centroids = new Mat();
         int numLabels = connectedComponentsWithStats(
                 binary, labels, stats, centroids, 8, CV_32S);
@@ -187,24 +197,22 @@ public class OcrProcessor {
             // Skip noise blobs (too short) and wide blobs (letters, not strokes)
             if (bh < 10 || bw > bh * 0.8) continue;
 
-            // Safe padded ROI
             int pad = 4;
-            int rx = Math.max(0, bx - pad);
-            int ry = Math.max(0, by - pad);
-            int rw = Math.min(bw + pad * 2, binary.cols() - rx);
-            int rh = Math.min(bh + pad * 2, binary.rows() - ry);
+            int rx  = Math.max(0, bx - pad);
+            int ry  = Math.max(0, by - pad);
+            int rw  = Math.min(bw + pad * 2, binary.cols() - rx);
+            int rh  = Math.min(bh + pad * 2, binary.rows() - ry);
 
             Mat blobRegion = new Mat(binary, new Rect(rx, ry, rw, rh));
 
-            // Probabilistic Hough on this blob only
             Vec4iVector lines = new Vec4iVector();
             HoughLinesP(
                     blobRegion, lines,
-                    1,                    // rho resolution (px)
-                    Math.PI / 180,        // theta resolution (rad)
-                    10,                   // accumulator threshold
-                    bh / 3.0,            // min line length (1/3 of blob height)
-                    5                     // max line gap
+                    1,
+                    Math.PI / 180,
+                    10,
+                    bh / 3.0,
+                    5
             );
 
             if (lines.empty() || lines.size() == 0) {
@@ -213,23 +221,18 @@ public class OcrProcessor {
                 continue;
             }
 
-            // 3. Extract coordinates
             double angleSum = 0;
             for (long j = 0; j < lines.size(); j++) {
-                // In JavaCV, Vec4iVector.get(i) returns an IntPointer of length 4
                 IntPointer line = lines.get(j);
                 int x1 = line.get(0);
                 int y1 = line.get(1);
                 int x2 = line.get(2);
                 int y2 = line.get(3);
-
                 double dx = x2 - x1;
                 double dy = y2 - y1;
                 angleSum += Math.toDegrees(Math.atan2(Math.abs(dy), Math.abs(dx)));
-
             }
             double avgAngle = angleSum / lines.size();
-            // Classify: near-vertical (≥ threshold) → '|', diagonal → '/'
             char detected = avgAngle >= ANGLE_THRESHOLD_DEGREES ? '|' : '/';
             results.add(new BarlineCharResult(bx, by, bw, bh, avgAngle, detected));
 
@@ -256,7 +259,6 @@ public class OcrProcessor {
             cvtColor(binary, annotated, COLOR_GRAY2BGR);
 
             for (BarlineCharResult r : results) {
-                // Green for '|', blue for '/'
                 Scalar colour = r.character == '|'
                         ? new Scalar(0, 200, 0, 0)
                         : new Scalar(200, 100, 0, 0);
@@ -284,17 +286,34 @@ public class OcrProcessor {
         labels.release();
         stats.release();
         centroids.release();
-        mat.release();
 
         return sequence.toString();
     }
 
-    // ── Private data class for detectBarlinePattern results ─────────────────
-        private record BarlineCharResult(int x, int y, int w, int h, double angle, char character) {
+    /**
+     * File-based overload — retained for backward compatibility and standalone use.
+     * Loads the file, converts to Mat, and delegates to detectBarlinePattern(Mat, File).
+     *
+     * Prefer the Mat-based overload when calling from within the OCR pipeline
+     * to avoid unnecessary disk I/O.
+     */
+    public String detectBarlinePattern(File imageFile, File outputFile) throws Exception {
+        BufferedImage bufferedImage = ImageIO.read(imageFile);
+        Java2DFrameConverter biConverter       = new Java2DFrameConverter();
+        OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
+        Mat mat = matConverter.convert(biConverter.convert(bufferedImage));
+        try {
+            return detectBarlinePattern(mat, outputFile);
+        } finally {
+            mat.release();
+        }
     }
 
+    // ── Private data class ───────────────────────────────────────────────────────
+    private record BarlineCharResult(int x, int y, int w, int h, double angle, char character) {}
+
     // ════════════════════════════════════════════════════════════════════════
-    // EXISTING METHODS — unchanged
+    // EXISTING UTILITY METHODS — unchanged
     // ════════════════════════════════════════════════════════════════════════
 
     private static void cleanupTessData(String tessDirPath) throws UncheckedIOException, IOException {
