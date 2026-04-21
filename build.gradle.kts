@@ -38,6 +38,9 @@ dependencies {
     implementation("org.openjfx:javafx-controls:$javafxVersion")
     implementation("org.openjfx:javafx-fxml:$javafxVersion")
 
+    // The core library for reading Exif, IPTC, XMP, etc.
+    implementation("com.drewnoakes:metadata-extractor:2.19.0")
+
     // ── JavaCPP runtime ───────────────────────────────────────────────────────
     implementation("org.bytedeco:javacpp:$javacppVersion")
     runtimeOnly("org.bytedeco:javacpp:$javacppVersion:macosx-arm64")

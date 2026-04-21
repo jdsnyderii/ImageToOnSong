@@ -1,6 +1,8 @@
 package com.imagetoonsong;
 
+import com.imagetoonsong.core.TessData;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
@@ -14,6 +16,7 @@ import javafx.stage.Stage;
  */
 public class App extends Application {
 
+    TessData tessData;
     @Override
     public void start(Stage primaryStage) throws Exception {
         // TODO: load your root FXML / scene here
@@ -22,5 +25,15 @@ public class App extends Application {
          primaryStage.setScene(scene);
          primaryStage.setTitle("ImageToOnSong");
          primaryStage.show();
+
+         tessData = new TessData();
+    }
+
+    @Override
+    public void stop() throws Exception {
+        if  (tessData != null) {
+            tessData.close();
+        }
+        super.stop();
     }
 }

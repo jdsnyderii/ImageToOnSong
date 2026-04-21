@@ -23,7 +23,6 @@ public class OnSongBuilder {
 
         String[] lines = rawOcrText.split("\n");
 
-        boolean inSection = false;
         for (String line : lines) {
             if (line.isEmpty()) {
                 sb.append("\n");
@@ -31,22 +30,13 @@ public class OnSongBuilder {
             }
 
             // Detect possible section headers (Verse 1, Chorus, Bridge, etc.)
-            if (line.matches("(?i)^[^a-zA-Z]*(verse|chorus|bridge|intro|outro|pre-?chorus|tag|interlude|instrumental)[^a-zA-Z]*.*")) {
-                if (inSection) sb.append("\n");
+            if (line.matches("(?i)^[^a-zA-Z]*(verse|chorus|bridge|intro|outro|pre-?chorus|tag|interlude|instrumental|break?down|ending)[^a-zA-Z]*.*")) {
+                sb.append("\n");
+                System.out.printf("Found section %s\n", line);
                 sb.append(normalizeSection(line)).append("\n");
-                inSection = true;
                 continue;
             }
-
-            // If line looks like chords, convert to bracketed
-            if (chordDetector.isLikelyChordLine(line)) {
-//                String bracketed = chordDetector.convertToBracketed(line);
-                sb.append(line).append("\n");
-            } else {
-                // Assume lyrics line - for now just add as-is
-                // Future: align chords above lyrics using boxes
-                sb.append(line).append("\n");
-            }
+            sb.append(line).append("\n");
         }
 
         return flagIncompleteLines(sb.toString());
@@ -54,7 +44,7 @@ public class OnSongBuilder {
 
     private static String flagIncompleteLines(String onSongText) {
         String[] lines = onSongText.split("\n");
-        Pattern hasChord = Pattern.compile("\\[[A-G][^\\]]*]");
+        Pattern hasChord = Pattern.compile("\\[[A-G][^]]*]");
         StringBuilder sb = new StringBuilder();
 
         for (int i = 0; i < lines.length; i++) {
@@ -76,7 +66,7 @@ public class OnSongBuilder {
 
     private static boolean isSectionHeader(String line) {
         return line.matches(
-                "(?i)^(Verse|Chorus|Bridge|Intro|Outro|Pre-?Chorus|Tag|Interlude).*:$");
+                "(?i)^(Verse|Chorus|Bridge|Intro|Outro|Pre-?Chorus|Tag|Instrumental|Interlude|Break?down|Ending).*:$");
     }
     private static String normalizeSection(String raw) {
         if (raw == null || raw.isBlank()) return raw;
@@ -85,14 +75,9 @@ public class OnSongBuilder {
 
         // Stop at first letter OR digit (not just letter)
         int start = 0;
-        while (start < stripped.length() && !Character.isLetterOrDigit(stripped.charAt(start))) {
-            start++;
-        }
-
         int end = stripped.length() - 1;
-        while (end > start && !Character.isLetterOrDigit(stripped.charAt(end))) {
-            end--;
-        }
+        if (stripped.charAt(0) == '[' || stripped.charAt(0) == '(') start++;
+        if (stripped.charAt(stripped.length() - 1) == ']') end--;
 
         if (start > end) return raw;
 

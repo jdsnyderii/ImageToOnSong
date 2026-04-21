@@ -1,7 +1,6 @@
 package com.imagetoonsong.core;
 
 import static com.imagetoonsong.core.ChordDetector.CHORD_PATTERN;
-import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import java.util.*;
@@ -11,29 +10,51 @@ import java.util.regex.Pattern;
 public class HocrTolerantParser {
 
     // ── Tuning constants ────────────────────────────────────────────────────────
-    /** Words whose y_top values differ by less than this are on the same line.   */
+    /** Words whose y_top values differ by less than this are on the same line. */
     private static final int Y_TOLERANCE = 12;
 
-    // ── Public entry-point ──────────────────────────────────────────────────────
+    /**
+     * Unanchored chord extractor — used ONLY inside parseSingleTokenStrummingLine()
+     * to find a chord at the START of a bar segment after splitting on '|'.
+     *
+     * This is intentionally separate from CHORD_PATTERN (anchored ^…$). It is
+     * never used for line-type classification — only for best-effort reconstruction
+     * of garbled tokens when no re-OCR override is available.
+     */
+    private static final Pattern CHORD_EXTRACT = Pattern.compile(
+            "^[A-G]([#b])?(m(?!aj)|min|maj|M|aug|dim|sus[24]?|add|ø|°)?(\\d{1,2})?(add\\d{1,2})?(/[A-G][#b]?)?"
+    );
 
-    public static String parseHocrToString(String html) {
-        Document doc = Jsoup.parse(html);
+    // ── Public entry-points ─────────────────────────────────────────────────────
 
-        // 1. Collect every word with its bounding box
+    /**
+     * Primary entry point — accepts re-OCR overrides from OcrProcessor.
+     *
+     * The overrides map contains  hOCR word yTop  →  clean re-OCR'd strumming text
+     * for lines where OcrProcessor ran a second Tesseract pass with the restricted
+     * STRUMMING_WHITELIST + PSM_SINGLE_LINE.
+     *
+     * When a logical line's words include a yTop present in the override map,
+     * the override value is emitted directly — no heuristic reconstruction needed.
+     * The fallback path (isStrummingLine / renderStrummingLine) handles any lines
+     * that were not caught by the re-OCR pass (e.g. multi-token garbled lines).
+     *
+     * @param doc              Parsed html Document
+     * @param strummingOverrides  yTop → clean text from OcrProcessor re-OCR pass
+     */
+    public static String parseHocrToString(Document doc, Map<Integer, String> strummingOverrides) {
+
         List<WordEntry> allWords = extractWords(doc);
         if (allWords.isEmpty()) return "";
 
-        // 2. Cluster words into logical lines by vertical proximity
         List<LogicalLine> lines = clusterIntoLines(allWords, Y_TOLERANCE);
 
-        // 3. Sort lines top-to-bottom, words left-to-right within each line
         lines.sort(Comparator.comparingInt(l -> l.yTop));
         for (LogicalLine line : lines) {
             line.words.sort(Comparator.comparingInt(w -> w.xLeft));
         }
 
-        // 4. Emit OnSong text
-        return renderOnSong(lines);
+        return renderOnSong(lines, strummingOverrides);
     }
 
     // ── Step 1 : word extraction ────────────────────────────────────────────────
@@ -43,7 +64,7 @@ public class HocrTolerantParser {
         for (Element span : doc.select("span.ocrx_word")) {
             int[] bbox = parseBbox(span.attr("title"));
             if (bbox == null) continue;
-            String text = span.text().trim();
+            String text = span.text().stripTrailing();
             if (!text.isEmpty()) {
                 result.add(new WordEntry(text, bbox[0], bbox[1], bbox[2], bbox[3]));
             }
@@ -52,10 +73,6 @@ public class HocrTolerantParser {
     }
 
     // ── Step 2 : line clustering ────────────────────────────────────────────────
-    //
-    // Strategy: iterate words sorted by y_top; each word either joins an
-    // existing "open" line whose representative y_top is within tolerance, or
-    // it starts a new line.
 
     private static List<LogicalLine> clusterIntoLines(List<WordEntry> words, int tolerance) {
         words.sort(Comparator.comparingInt(w -> w.yTop));
@@ -63,21 +80,20 @@ public class HocrTolerantParser {
         List<LogicalLine> lines = new ArrayList<>();
 
         for (WordEntry word : words) {
-            LogicalLine best = null;
-            int bestDist = Integer.MAX_VALUE;
+            LogicalLine best     = null;
+            int         bestDist = Integer.MAX_VALUE;
 
             for (LogicalLine line : lines) {
                 int dist = Math.abs(line.yTop - word.yTop);
                 if (dist <= tolerance && dist < bestDist) {
-                    best = line;
+                    best     = line;
                     bestDist = dist;
                 }
             }
 
             if (best != null) {
                 best.words.add(word);
-                // Running average keeps cluster centre from locking to the first
-                // word when Tesseract gives slightly wobbling baselines.
+                // Running average keeps cluster centre from locking to first word
                 best.yTop = (best.yTop * (best.words.size() - 1) + word.yTop)
                         / best.words.size();
             } else {
@@ -96,31 +112,44 @@ public class HocrTolerantParser {
      * Renders all logical lines to OnSong text.
      *
      * Line type priority (checked in order):
-     *  1. STRUMMING  — e.g. | G / / / / | Bm / / / / |
-     *     Must be checked BEFORE isChordLine() because a strumming line with
-     *     Tesseract-dropped slashes looks like a pure chord line (only G and Bm
-     *     survive), which would cause those chords to be merged into the next
-     *     lyric line — the primary misplacement bug this fixes.
-     *  2. CHORD+LYRIC — chord line immediately above a lyric line → merged inline
-     *  3. PLAIN       — lyric, section header, standalone chord line, etc.
+     *
+     *  0. OVERRIDE — a re-OCR'd strumming line supplied by OcrProcessor.
+     *     The value is emitted verbatim; all other checks are skipped.
+     *     This is the primary fix path for collapsed strumming tokens like
+     *     "|G//1/1|DIF#/1111]]" — OcrProcessor already produced the clean text.
+     *
+     *  1. STRUMMING (fallback) — heuristic detection + reconstruction for lines
+     *     not covered by the override map (multi-token garbled lines, PATH B/C).
+     *     Must still be checked before isChordLine() for the same reasons as before.
+     *
+     *  2. CHORD+LYRIC — chord line immediately above a lyric line → inline merge.
+     *  3. PLAIN — lyric, section header, standalone chord line.
      */
-    private static String renderOnSong(List<LogicalLine> lines) {
+    private static String renderOnSong(List<LogicalLine> lines,
+                                       Map<Integer, String> overrides) {
         StringBuilder sb = new StringBuilder();
 
         for (int i = 0; i < lines.size(); i++) {
             LogicalLine line = lines.get(i);
 
-            if (isStrummingLine(line)) {
-                // ── NEW: strumming lines rendered with gap-filled slash reconstruction
+            // ── PRIORITY 0: re-OCR override ──────────────────────────────────
+            String override = findOverride(line, overrides);
+            if (override != null) {
+                sb.append(override);
+
+                // ── PRIORITY 1: heuristic strumming fallback ──────────────────────
+            } else if (isStrummingLine(line)) {
                 sb.append(renderStrummingLine(line));
 
-            } else if (isChordLine(line) && i + 1 < lines.size() && !isChordLine(lines.get(i + 1))) {
-                // Chord line paired with the lyric line below → inline [Chord] notation
+                // ── PRIORITY 2: chord line above a lyric line ─────────────────────
+            } else if (isChordLine(line)
+                    && i + 1 < lines.size()
+                    && !isChordLine(lines.get(i + 1))) {
                 sb.append(mergeChordIntoLyric(line, lines.get(i + 1)));
-                i++; // skip the lyric line we just consumed
+                i++;
 
+                // ── PRIORITY 3: plain output ──────────────────────────────────────
             } else {
-                // Plain lyric, section header, or standalone chord line
                 sb.append(wordsToString(line));
             }
 
@@ -130,72 +159,115 @@ public class HocrTolerantParser {
         return sb.toString();
     }
 
-    // ── Strumming line detection ─────────────────────────────────────────────────
+    /**
+     * Looks up an override for this logical line by checking whether any of its
+     * words' original hOCR yTop values are keys in the override map.
+     *
+     * Using original word yTop (not the averaged line.yTop) ensures we match the
+     * exact bbox value that OcrProcessor used as the map key when it cropped the
+     * strumming line for re-OCR.
+     *
+     * Returns the override string, or null if no match.
+     */
+    private static String findOverride(LogicalLine line, Map<Integer, String> overrides) {
+        if (overrides.isEmpty()) return null;
+        for (WordEntry w : line.words) {
+            String found = overrides.get(w.yTop);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    // ── Strumming line detection (fallback for lines without override) ───────────
 
     /**
-     * Returns true when this line looks like a strumming/bar pattern,
-     * e.g.:  | G / / / / / / | Bm / / / / / / |
+     * Returns true when this line is a strumming/bar pattern.
      *
-     * A strumming line has at least one real chord token AND either:
-     *  (a) three or more slash/pipe tokens, OR
-     *  (b) at least one pipe token alongside at least one slash token.
+     * Only reached when OcrProcessor did NOT produce a re-OCR override for this
+     * line — i.e. the first-pass token did not trigger looksLikeStrummingToken().
+     * This typically means a multi-token case or a line with different garbling.
      *
-     * Tokens Tesseract commonly produces for '|': |  l  L  I  i  1
-     * Tokens Tesseract commonly produces for '/': /  \
-     *
-     * Must be checked before isChordLine() — when Tesseract drops all slash
-     * tokens (noise rejection), only the chord names survive, making the line
-     * indistinguishable from a normal chord line by isChordLine() alone.
+     * PATH A — single-token: token has pipe + slashes + chord root (same test as
+     *   OcrProcessor.looksLikeStrummingToken — catches any the re-OCR pass missed).
+     * PATH B — multi-token with recognisable slash/pipe tokens.
+     * PATH C — multi-token with high slash-character density (≥ 40%).
      */
     private static boolean isStrummingLine(LogicalLine line) {
-        if (line.words.size() < 2) return false;
+        if (line.words.isEmpty()) return false;
 
+        // PATH A — single collapsed token
+        if (line.words.size() == 1) {
+            return isSingleTokenStrumming(line.words.get(0).text);
+        }
+
+        // PATH B — multi-token with recognisable slash/pipe tokens
         long chordCount = line.words.stream()
                 .filter(w -> CHORD_PATTERN.matcher(normalizeChordToken(w.text)).matches())
                 .count();
-
         long slashCount = line.words.stream()
                 .filter(w -> w.text.matches("[/\\\\]+"))
                 .count();
-
-        long pipeCount = line.words.stream()
+        long pipeCount  = line.words.stream()
                 .filter(w -> w.text.matches("[|lLiI1]{1,2}"))
                 .count();
 
-        if (chordCount < 1) return false;
+        if (chordCount >= 1 && (slashCount >= 3 || (pipeCount >= 1 && slashCount >= 1))) {
+            return true;
+        }
 
-        // Strong signal: 3+ slashes, or at least one pipe + one slash
-        return slashCount >= 3 || (pipeCount >= 1 && slashCount >= 1);
+        // PATH C — high slash-char density
+        String allText   = line.words.stream().map(w -> w.text).reduce("", String::concat);
+        long   slashLike = allText.chars()
+                .filter(c -> "/1lLIT|[]{}\\".indexOf(c) >= 0)
+                .count();
+        boolean hasChordRoot = allText.chars().anyMatch(c -> "ABCDEFG".indexOf(c) >= 0);
+
+        return hasChordRoot
+                && allText.length() >= 5
+                && (double) slashLike / allText.length() >= 0.40;
     }
 
+    private static boolean isSingleTokenStrumming(String text) {
+        boolean hasPipeLike  = text.chars().anyMatch(c -> "|[]{}".indexOf(c) >= 0);
+        long    slashLike    = text.chars().filter(c -> "/1lL".indexOf(c) >= 0).count();
+        boolean hasChordRoot = text.chars().anyMatch(c -> "ABCDEFG".indexOf(c) >= 0);
+        return hasPipeLike && slashLike >= 3 && hasChordRoot && text.length() >= 5;
+    }
+
+    // ── Strumming line rendering (fallback) ─────────────────────────────────────
+
     /**
-     * Reconstructs a strumming line from its hOCR tokens, filling gaps where
-     * Tesseract dropped slash characters using bounding-box x-position arithmetic.
+     * Reconstructs a strumming line from heuristics when no re-OCR override exists.
      *
-     * Algorithm:
-     *  1. Sort tokens left-to-right by xLeft.
-     *  2. Estimate the pixel width of one slash token on this line (median of
-     *     actual slash/pipe token widths, or a 20px fallback).
-     *  3. Walk tokens; for each gap wider than 1.2× slash width, emit that many
-     *     reconstructed '/' characters (capped at 8 to avoid runaway output).
-     *  4. Chord tokens → emit as [Chord].
-     *  5. Pipe tokens  → emit as '|'.
-     *  6. Slash tokens → emit as '/'.
-     *
-     * Output example:  | [G]/ / / / / / | [Bm]/ / / / / / |
+     * Single token  → parseSingleTokenStrummingLine() (string-level repair).
+     * Multi PATH C  → concatenate + parseSingleTokenStrummingLine().
+     * Multi PATH B  → bbox gap-fill using bounding box x-positions.
      */
     private static String renderStrummingLine(LogicalLine line) {
+
+        if (line.words.size() == 1) {
+            return parseSingleTokenStrummingLine(line.words.getFirst().text);
+        }
+
+        long slashCount = line.words.stream()
+                .filter(w -> w.text.matches("[/\\\\]+")).count();
+        long pipeCount  = line.words.stream()
+                .filter(w -> w.text.matches("[|lLiI1]{1,2}")).count();
+
+        if (slashCount == 0 && pipeCount == 0) {
+            String combined = line.words.stream().map(w -> w.text).reduce("", String::concat);
+            return parseSingleTokenStrummingLine(combined);
+        }
+
+        // PATH B — bbox gap-fill
         List<WordEntry> tokens = new ArrayList<>(line.words);
         tokens.sort(Comparator.comparingInt(w -> w.xLeft));
 
-        int slashWidth = estimateSlashWidth(tokens);
-
-        StringBuilder sb = new StringBuilder();
-        WordEntry prev = null;
+        int           slashWidth = estimateSlashWidth(tokens);
+        StringBuilder sb         = new StringBuilder();
+        WordEntry     prev       = null;
 
         for (WordEntry token : tokens) {
-
-            // Fill gap between previous token and this one with dropped slashes
             if (prev != null) {
                 int gap = token.xLeft - prev.xRight;
                 if (gap > slashWidth * 1.2 && slashWidth > 0) {
@@ -211,28 +283,75 @@ public class HocrTolerantParser {
             } else if (token.text.matches("[|lLiI1]{1,2}")) {
                 sb.append("| ");
             } else if (token.text.matches("[/\\\\]+")) {
-                // Tesseract sometimes bunches multiple slashes into one token
                 for (int j = 0; j < token.text.length(); j++) sb.append("/ ");
             } else {
-                // Unknown short token — emit as-is
                 sb.append(token.text).append(' ');
             }
-
             prev = token;
         }
 
-        // Ensure line ends with a closing bar if it opened with one
         String result = sb.toString().stripTrailing();
         if (result.startsWith("|") && !result.endsWith("|")) result += " |";
         return result;
     }
 
     /**
-     * Returns the median pixel width of slash/pipe tokens on this line.
-     * Used by renderStrummingLine() to estimate how many slashes were dropped
-     * in a gap between two recognised tokens.
-     * Falls back to 20px if no slash/pipe tokens are present.
+     * String-level repair for a single garbled strumming token.
+     *
+     * This is the FALLBACK path — it runs only when OcrProcessor did not produce
+     * a re-OCR override. It exists because:
+     *  (a) PATH C multi-token garbled lines may not be caught by
+     *      looksLikeStrummingToken() in OcrProcessor (which only checks single tokens).
+     *  (b) It provides a safety net if re-OCR is unavailable.
+     *
+     * Input:  "|G//1/1|DIF#/1111]]"
+     * Output: "| [G]/ / / / | [D/F#]/ / / / |"
      */
+    private static String parseSingleTokenStrummingLine(String raw) {
+        // Step 1: normalize bracket/brace chars → '|'
+        String s = raw.replaceAll("[\\[\\]{}]", "|");
+
+        // Step 2: repair mangled slash chords (e.g. "DIF#" → "D/F#")
+        s = s.replaceAll("([A-G][#b]?)([IlL])([A-G][#b]?)", "$1/$3");
+
+        // Step 3: split on pipe characters
+        String[]      segments = s.split("\\|+");
+        StringBuilder sb       = new StringBuilder();
+        boolean       first    = true;
+
+        for (String seg : segments) {
+            seg = seg.stripTrailing();
+            if (seg.isEmpty()) {
+                sb.append("| ");
+                first = false;
+                continue;
+            }
+
+            Matcher chordMatcher = CHORD_EXTRACT.matcher(seg);
+            String  chord        = null;
+            String  remainder    = seg;
+
+            if (chordMatcher.find() && chordMatcher.start() == 0) {
+                chord     = chordMatcher.group();
+                remainder = seg.substring(chord.length());
+            }
+
+            int beats = 0;
+            for (char c : remainder.toCharArray()) {
+                if (c == '/' || c == '1' || c == 'l' || c == 'L') beats++;
+            }
+
+            if (!first) sb.append("| ");
+            if (chord != null) sb.append('[').append(chord).append(']');
+            for (int i = 0; i < beats; i++) sb.append("/ ");
+            first = false;
+        }
+
+        String result = sb.toString().stripTrailing();
+        if (!result.isEmpty() && !result.endsWith("|")) result += " |";
+        return result;
+    }
+
     private static int estimateSlashWidth(List<WordEntry> tokens) {
         List<Integer> widths = tokens.stream()
                 .filter(w -> w.text.matches("[|/lLiI1\\\\]"))
@@ -240,71 +359,55 @@ public class HocrTolerantParser {
                 .filter(w -> w > 0)
                 .sorted()
                 .toList();
-
-        if (widths.isEmpty()) return 20; // fallback: ~20px per slash at 3× upscale
-        return widths.get(widths.size() / 2); // median
+        if (widths.isEmpty()) return 20;
+        return widths.get(widths.size() / 2);
     }
 
     // ── Chord+lyric merging ──────────────────────────────────────────────────────
 
-    /**
-     * Interleaves chord tokens into a lyric line using OnSong [Chord] notation.
-     *
-     * Chords that fall within a word's pixel span are split at a proportional
-     * character index so that e.g. [Bb] above the 'b' in "Remember" becomes
-     * "Re[Bb]member" rather than "[Bb]Remember".
-     */
     private static String mergeChordIntoLyric(LogicalLine chordLine, LogicalLine lyricLine) {
         List<WordEntry> chords = new ArrayList<>(chordLine.words);
-        List<WordEntry> lyrics  = lyricLine.words;
+        List<WordEntry> lyrics = lyricLine.words;
 
         StringBuilder sb = new StringBuilder();
-        int ci = 0; // chord cursor
+        int ci = 0;
 
         for (WordEntry word : lyrics) {
-
-            // A. Flush chords that fall in the gap before this word
             while (ci < chords.size() && chords.get(ci).xLeft < word.xLeft) {
                 sb.append('[').append(normalizeChordToken(chords.get(ci).text)).append(']');
                 ci++;
             }
 
-            // B. Collect chords whose xLeft falls inside this word's pixel span
             List<WordEntry> inWord = new ArrayList<>();
             while (ci < chords.size() && chords.get(ci).xLeft <= word.xRight) {
-                inWord.add(chords.get(ci));
-                ci++;
+                inWord.add(chords.get(ci++));
             }
 
-            // C. Render the word, splitting it at each chord's proportional index
             if (inWord.isEmpty()) {
                 sb.append(word.text);
             } else {
-                String text      = word.text;
-                int   pixelWidth = word.xRight - word.xLeft;
-                int   charCursor = 0;
+                String text       = word.text;
+                int    pixelWidth = word.xRight - word.xLeft;
+                int    charCursor = 0;
 
                 for (WordEntry chord : inWord) {
                     int insertAt;
                     if (pixelWidth <= 0 || chord.xLeft <= word.xLeft) {
                         insertAt = 0;
                     } else {
-                        double ratio = (double)(chord.xLeft - word.xLeft) / pixelWidth;
-                        insertAt = (int) Math.round(ratio * text.length());
-                        insertAt = Math.clamp(insertAt, 0, text.length());
+                        double ratio = (double) (chord.xLeft - word.xLeft) / pixelWidth;
+                        insertAt = Math.clamp((int) Math.round(ratio * text.length()),
+                                0, text.length());
                     }
                     sb.append(text, charCursor, insertAt);
                     sb.append('[').append(normalizeChordToken(chord.text)).append(']');
                     charCursor = insertAt;
                 }
-
                 sb.append(text, charCursor, text.length());
             }
-
             sb.append(' ');
         }
 
-        // D. Any chords that trail after the last lyric word
         while (ci < chords.size()) {
             sb.append('[').append(normalizeChordToken(chords.get(ci).text)).append(']');
             ci++;
@@ -315,11 +418,6 @@ public class HocrTolerantParser {
 
     // ── Line type classification ─────────────────────────────────────────────────
 
-    /**
-     * Returns true when most tokens on the line look like chord names.
-     * Uses CHORD_PATTERN.matches() (whole-token, anchored) — not .find().
-     * Majority vote allows one mis-OCR'd token without flipping the result.
-     */
     private static boolean isChordLine(LogicalLine line) {
         long chordCount = line.words.stream()
                 .filter(w -> CHORD_PATTERN.matcher(normalizeChordToken(w.text)).matches())
@@ -330,21 +428,11 @@ public class HocrTolerantParser {
     // ── Token normalisation ──────────────────────────────────────────────────────
 
     private static final Map<String, String> OCR_CORRECTIONS = Map.of(
-            "é", "s",
-            "è", "s",
-            "ê", "s",
-            "ë", "s",
-            "0", "O",   // zero in chord context is always letter O
-            "1", "l"    // only meaningful in chord context
+            "é", "s", "è", "s", "ê", "s", "ë", "s",
+            "0", "O",
+            "1", "l"
     );
 
-    /**
-     * Applied to individual chord tokens before chord regex matching.
-     *  - Applies OCR character corrections.
-     *  - Uppercases the first letter (fixes ocr producing "c7" → "C7").
-     *  - Strips OCR ghosting (e.g. "Cc7" → "C7") — a doubled lowercase letter
-     *    that is not 'm' (minor) or 'b' (flat) is treated as noise.
-     */
     private static String normalizeChordToken(String raw) {
         String s = raw;
         for (Map.Entry<String, String> e : OCR_CORRECTIONS.entrySet()) {
@@ -375,20 +463,15 @@ public class HocrTolerantParser {
 
     // ── hOCR parsing ─────────────────────────────────────────────────────────────
 
-    /**
-     * Parses "bbox x_left y_top x_right y_bottom" from a Tesseract title string.
-     * Returns int[4] = { xLeft, yTop, xRight, yBottom } or null on failure.
-     */
     private static int[] parseBbox(String title) {
         if (title == null) return null;
-        Pattern p = Pattern.compile("bbox\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)");
-        Matcher m = p.matcher(title);
+        Matcher m = Pattern.compile("bbox\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)").matcher(title);
         if (!m.find()) return null;
         return new int[]{
-                Integer.parseInt(m.group(1)), // xLeft
-                Integer.parseInt(m.group(2)), // yTop
-                Integer.parseInt(m.group(3)), // xRight
-                Integer.parseInt(m.group(4))  // yBottom
+                Integer.parseInt(m.group(1)),
+                Integer.parseInt(m.group(2)),
+                Integer.parseInt(m.group(3)),
+                Integer.parseInt(m.group(4))
         };
     }
 
@@ -397,7 +480,7 @@ public class HocrTolerantParser {
     private record WordEntry(String text, int xLeft, int yTop, int xRight, int yBottom) {}
 
     private static class LogicalLine {
-        int yTop; // mutable running average
+        int yTop;
         final List<WordEntry> words = new ArrayList<>();
         LogicalLine(int yTop) { this.yTop = yTop; }
     }

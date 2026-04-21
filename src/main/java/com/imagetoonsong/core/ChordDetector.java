@@ -53,26 +53,8 @@ public class ChordDetector {
      * Uses CHORD_INLINE (not CHORD_PATTERN) so it can scan within a string.
      */
     public String convertToBracketed(String line) {
-        if (line == null || line.trim().isEmpty()) return line;
+        if (line == null || line.stripTrailing().isEmpty()) return line;
         return CHORD_INLINE.matcher(line).replaceAll(match -> "[" + match.group() + "]");
-    }
-
-    /**
-     * Returns true if a line contains mostly chord tokens.
-     *
-     * Changes from previous version:
-     *  - Now splits into tokens and tests each with CHORD_PATTERN.matches()
-     *    (whole-token match) rather than CHORD_PATTERN.find() (substring match).
-     *  - Applies normalizeForDetection() before matching to mirror what
-     *    HocrTolerantParser.normalizeChordToken() does on hOCR tokens.
-     */
-    public boolean isLikelyChordLine(String line) {
-        if (line == null || line.trim().isEmpty()) return false;
-        String[] words = line.trim().split("\\s+");
-        long chordMatches = Arrays.stream(words)
-                .filter(w -> CHORD_PATTERN.matcher(normalizeForDetection(w)).matches())
-                .count();
-        return chordMatches >= Math.max(1, words.length * 0.3);
     }
 
     /**
