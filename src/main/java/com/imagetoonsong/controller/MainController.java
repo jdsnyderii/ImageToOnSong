@@ -134,7 +134,9 @@ public class MainController {
                 String rawText = ocr.extractText(currentImageFile);
                 System.out.println("OCR finished - raw text length: " + rawText.length());
 
+                String barLineDetection = ocr.detectBarlinePattern(currentImageFile, new File(currentImageFile.getParent(), "barline.png"));
                 long duration = System.currentTimeMillis() - startTime;
+                System.out.printf("BarLine Text : %s\n", barLineDetection);
 
                 OnSongBuilder builder = new OnSongBuilder();
                 String result = builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist");
