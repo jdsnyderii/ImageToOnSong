@@ -58,8 +58,7 @@ public class TessData implements AutoCloseable{
         final String dataDir    = "tessdata";
         final String dataSuffix = ".traineddata";
         final String[] trainedDataFiles = {
-                "eng" + dataSuffix,
-                "osd" + dataSuffix
+                "eng" + dataSuffix
         };
 
         Path tessDataFolder = tempRoot.resolve(dataDir);
