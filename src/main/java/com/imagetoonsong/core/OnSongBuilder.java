@@ -23,18 +23,25 @@ public class OnSongBuilder {
 
         String[] lines = rawOcrText.split("\n");
 
+        int lineNumber = 0;
         for (String line : lines) {
+            lineNumber++;
             if (line.isEmpty()) {
                 sb.append("\n");
+                System.out.printf("%d : Found empty\n", lineNumber);
+
                 continue;
             }
 
             // Detect possible section headers (Verse 1, Chorus, Bridge, etc.)
             if (line.matches("(?i)^[^a-zA-Z]*(verse|chorus|bridge|intro|outro|pre-?chorus|tag|interlude|instrumental|break?down|ending)[^a-zA-Z]*.*")) {
                 sb.append("\n");
-                System.out.printf("Found section %s\n", line);
+                System.out.printf("%d : Found section %s\n", lineNumber, line);
                 sb.append(normalizeSection(line)).append("\n");
                 continue;
+            }
+            if (line.length() == 1) {
+                System.out.printf("%d : Found singleton %s\n", lineNumber, line);
             }
             sb.append(line).append("\n");
         }

@@ -1,19 +1,17 @@
 package com.imagetoonsong.controller;
 
+import com.imagetoonsong.core.ImageSource;
 import com.imagetoonsong.core.OnSongBuilder;
 import com.imagetoonsong.core.OcrProcessor;
+import com.imagetoonsong.events.AppEventBus;
+import com.imagetoonsong.events.PasteImageEvent;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.input.Clipboard;
-import javafx.scene.input.ClipboardContent;
-import javafx.scene.input.DragEvent;
-import javafx.scene.input.Dragboard;
-import javafx.scene.input.TransferMode;
+import javafx.scene.input.*;
 import javafx.stage.FileChooser;
-//import javafx.stage.Stage;
 
 import java.io.File;
 import java.io.IOException;
@@ -37,9 +35,9 @@ public class MainController {
     @FXML private Button downloadButton;
     @FXML private ComboBox<String> styleCombo;
 
-    private File currentImageFile;
     private String currentOnSongText = "";
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private ImageSource imageSource;
 
     @FXML
     public void initialize() {
@@ -53,6 +51,12 @@ public class MainController {
         imageView.setOnDragOver(this::handleDragOver);
         imageView.setOnDragDropped(this::handleDragDropped);
 
+        // 1. Make it capable of receiving focus
+        imageView.setFocusTraversable(true);
+
+        // 2. Give it focus when clicked (so it can hear the keyboard)
+        imageView.setOnMouseClicked(e -> imageView.requestFocus());
+
         // Disable buttons initially
         convertButton.setDisable(true);
         copyButton.setDisable(true);
@@ -64,7 +68,14 @@ public class MainController {
                 "Chords Over Lyrics"
         );
         styleCombo.setValue("Bracketed Chords [C]");
+        AppEventBus.getInstance().subscribe(event -> {
+            if (event instanceof PasteImageEvent(ImageSource src)) {
+                handleChordImage(src);
+            }
+        });
+
     }
+
 
     @FXML
     private void handleExit() {
@@ -98,24 +109,25 @@ public class MainController {
         }
     }
 
+    private void handleChordImage(ImageSource src) {
+        imageSource = src;
+        Image image = imageSource.image();
+        imageView.setImage(image);
+        imageInfoLabel.setText(imageSource.source() + " (" + (int)image.getWidth() + "×" + (int)image.getHeight() + ")");
+        statusLabel.setText("Image loaded. Click Convert to process.");
+        convertButton.setDisable(false);
+    }
+
     private void loadImage(File file) {
         try {
-            currentImageFile = file;
-            Image image = new Image(file.toURI().toString());
-            imageView.setImage(image);
-            imageInfoLabel.setText(file.getName() + " (" + (int)image.getWidth() + "×" + (int)image.getHeight() + ")");
-
-            statusLabel.setText("Image loaded. Click Convert to process.");
-            convertButton.setDisable(false);
-
+            ImageSource imageSource = ImageSource.fromFile(file);
+            handleChordImage(imageSource);
         } catch (Exception e) {
             showError("Failed to load image", e.getMessage());
         }
     }
 
     private void convertImage() {
-        if (currentImageFile == null) return;
-
         progressIndicator.setVisible(true);
         statusLabel.setText("Starting OCR...");
         convertButton.setDisable(true);
@@ -124,14 +136,12 @@ public class MainController {
         executor.submit(() -> {
             try {
                 System.out.println("=== OCR START ===");
-                System.out.println("Image file: " + currentImageFile.getAbsolutePath());
 
                 long startTime = System.currentTimeMillis();
 
                 OcrProcessor ocr = new OcrProcessor();
                 System.out.println("OcrProcessor created");
-
-                String rawText = ocr.extractText(currentImageFile);
+                String rawText = ocr.extractText(imageSource);
                 System.out.println("OCR finished - raw text length: " + rawText.length());
 
                 long duration = System.currentTimeMillis() - startTime;
@@ -164,6 +174,7 @@ public class MainController {
             }
         });
     }
+
     private void copyToClipboard() {
         if (currentOnSongText.isEmpty()) return;
         Clipboard clipboard = Clipboard.getSystemClipboard();

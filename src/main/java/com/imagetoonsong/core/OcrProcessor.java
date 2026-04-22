@@ -1,5 +1,8 @@
 package com.imagetoonsong.core;
 
+import javafx.scene.image.Image;
+import javafx.scene.image.PixelReader;
+import javafx.scene.image.WritablePixelFormat;
 import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.IntPointer;
 import org.bytedeco.javacpp.indexer.IntIndexer;
@@ -15,6 +18,7 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
 import javax.imageio.ImageIO;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -86,9 +90,15 @@ public class OcrProcessor {
      */
     private static final double BARLINE_ASPECT_RATIO_THRESHOLD = 0.30;
 
+    private static final int PREPROCESSING_SCALE = 3;
+
     // ════════════════════════════════════════════════════════════════════════
     // MAIN OCR PIPELINE
     // ════════════════════════════════════════════════════════════════════════
+
+    public String extractText(File imageFile) throws Exception {
+        return extractText(ImageSource.fromFile(imageFile));
+    }
 
     /**
      * Full pipeline:
@@ -98,22 +108,20 @@ public class OcrProcessor {
      *     and re-run Tesseract with PSM_SINGLE_LINE + STRUMMING_WHITELIST.
      *  4. Pass hOCR + strumming overrides to HocrTolerantParser.
      */
-    public String extractText(File imageFile) throws Exception, UncheckedIOException {
+    public String extractText(ImageSource imageSource) throws Exception, UncheckedIOException {
         System.out.println("=== Starting Bytedeco Tesseract OCR ===");
-        System.out.println("Image: " + imageFile.getName());
+        int tesseractDpi = imageSource.dpi() ; // * PREPROCESSING_SCALE;
 
         TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, "eng");
         api.SetVariable("tessedit_char_whitelist", PAGE_WHITELIST);
 
-        BufferedImage bufferedImage = ImageIO.read(imageFile);
-        int dpi = estimateDpi(imageFile);
-        api.SetVariable("user_defined_dpi", String.valueOf(dpi));
-        System.out.printf("Using DPI: %d%n", dpi);
+        api.SetVariable("user_defined_dpi", String.valueOf(tesseractDpi));
+        System.out.printf("Using scaled DPI: %d%n", tesseractDpi);
 
         Java2DFrameConverter biConverter = new Java2DFrameConverter();
         OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
 
-        Mat mat = matConverter.convert(biConverter.convert(bufferedImage));
+        Mat mat = matConverter.convert(biConverter.convert(imageSource.toBufferedImage()));
         Mat processed = preprocessImage(mat);
 
         Mat padded = new Mat();
@@ -134,7 +142,7 @@ public class OcrProcessor {
 
         // ── Re-OCR pass for strumming lines ──────────────────────────────────
         Document doc = Jsoup.parse(html);
-        Map<Integer, String> strummingOverrides = reOcrStrummingLines(doc, padded, dpi);
+        Map<Integer, String> strummingOverrides = reOcrStrummingLines(doc, padded, tesseractDpi);
 
         api.End();
         api.close();
@@ -159,19 +167,19 @@ public class OcrProcessor {
 
         api.SetPageSegMode(pageSegMode);
         api.SetVariable("preserve_interword_spaces", "1");
-        api.SetVariable("tosp_min_sane_kn_sp", "1.0");
+        api.SetVariable("tosp_min_sane_kn_sp", "1.5");
         api.SetVariable("textord_tabfind_find_tables", "0");
         api.SetVariable("tessedit_create_hocr", "1");
         api.SetVariable("load_system_dawg", "0");
         api.SetVariable("load_freq_dawg", "0");
-        api.SetVariable("tessedit_minimal_rejection", "1");
+        api.SetVariable("tessedit_minimal_rejection", "0");
         api.SetVariable("edges_min_nonhole", "2");
-        api.SetVariable("textord_min_linesize", "0.5");
+        api.SetVariable("textord_min_linesize", "0.3");
         api.SetVariable("textord_noise_rejrows", "0");
-        api.SetVariable("textord_noise_sncount", "1");
+        api.SetVariable("textord_noise_sncount", "0");
         api.SetVariable("textord_noise_sizelimit", "0.01");
         api.SetVariable("textord_noise_normratio", "0.0");
-        api.SetVariable("edges_max_children_per_outline", "60");
+        api.SetVariable("edges_max_children_per_outline", "40");
 
         return api;
     }
@@ -341,10 +349,10 @@ public class OcrProcessor {
      * names become [G], [D/F#] etc. ready for OnSong/ChordPro output.
      */
     private String runStrummingLineOcr(Mat crop, int dpi) {
-        GaussianBlur(crop, crop, new Size(1, 3), 0);
+//        GaussianBlur(crop, crop, new Size(1, 3), 0);
 
-            MatchedCharacterResults results = runIndividualCharacterOcr(crop, dpi);
-            System.out.println("Caracter OCR: " + results.ocrChars);
+        MatchedCharacterResults results = runIndividualCharacterOcr(crop, dpi);
+        System.out.println("Caracter OCR: " + results.ocrChars);
 
         ChordDetector detector = new ChordDetector();
         String bracketedChords = detector.convertToBracketed(results.ocrChars);
@@ -430,13 +438,13 @@ public class OcrProcessor {
         // Find bounding boxes of all character blobs
         findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
+
         List<Rect> boundingBoxes = new ArrayList<>();
         for (int i = 0; i < contours.size(); i++) {
             Rect rect = boundingRect(contours.get(i));
+            boolean keep = rect.width() > 2 && rect.height() > 5;
             // Filter out noise (tiny dots/specks)
-            if (rect.width() > 2 && rect.height() > 5) {
-                boundingBoxes.add(rect);
-            }
+            if (keep) boundingBoxes.add(rect);
         }
 
         // Sort left-to-right — critical for correct chord/stroke ordering
@@ -642,7 +650,7 @@ public class OcrProcessor {
 
         cvtColor(src, gray, COLOR_BGR2GRAY);
         resize(gray, upscaled,
-                new Size(gray.cols() * 3, gray.rows() * 3), .9f, .9f, INTER_LANCZOS4);
+                new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE), .9f, .9f, INTER_LANCZOS4);
         normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
         threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
 
@@ -650,7 +658,7 @@ public class OcrProcessor {
         return binary;
     }
 
-    protected int estimateDpi(File originalImage) throws IOException {
-        return ImageMetadata.extractDpi(originalImage);
+    protected int estimateDpi(File file) throws IOException {
+        return ImageMetadata.extractDpi(file);
     }
 }
