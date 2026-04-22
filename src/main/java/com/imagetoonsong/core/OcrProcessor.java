@@ -7,6 +7,7 @@ import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.IntPointer;
 import org.bytedeco.javacpp.indexer.IntIndexer;
 import org.bytedeco.javacv.Java2DFrameConverter;
+import org.bytedeco.javacv.JavaFXFrameConverter;
 import org.bytedeco.javacv.OpenCVFrameConverter;
 import org.bytedeco.opencv.opencv_core.*;
 import org.bytedeco.opencv.opencv_imgproc.Vec4iVector;
@@ -16,6 +17,7 @@ import org.bytedeco.tesseract.global.tesseract;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.opencv.core.CvType;
 
 import javax.imageio.ImageIO;
 import javax.imageio.stream.ImageInputStream;
@@ -122,6 +124,7 @@ public class OcrProcessor {
         OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
 
         Mat mat = matConverter.convert(biConverter.convert(imageSource.toBufferedImage()));
+
         Mat processed = preprocessImage(mat);
 
         Mat padded = new Mat();
@@ -154,6 +157,27 @@ public class OcrProcessor {
         System.out.println("OCR completed successfully - " + result.length() + " characters returned");
 
         return result;
+    }
+
+    public Mat imageToMatBytedeco(Image image) {
+        int width = (int) image.getWidth();
+        int height = (int) image.getHeight();
+
+        // 1. Extract bytes from JavaFX
+        byte[] buffer = new byte[width * height * 4];
+        PixelReader reader = image.getPixelReader();
+
+        // Use BGRA to match OpenCV's 4-channel native order
+        reader.getPixels(0, 0, width, height,
+                WritablePixelFormat.getByteBgraInstance(),
+                buffer, 0, width * 4);
+
+        // 2. Wrap the byte array in a JavaCPP BytePointer
+        BytePointer ptr = new BytePointer(buffer);
+
+        // 3. Construct the Mat
+        // CV_8UC4 = 8-bit Unsigned, 4 channels (BGRA)
+        return new Mat(height, width, CV_8UC4, ptr);
     }
 
     protected TessBaseAPI createTessAPI(int pageSegMode, String language) {
