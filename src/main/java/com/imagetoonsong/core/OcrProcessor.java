@@ -113,7 +113,7 @@ public class OcrProcessor {
      */
     public String extractText(ImageSource imageSource) throws Exception, UncheckedIOException {
         System.out.println("=== Starting Bytedeco Tesseract OCR ===");
-        int tesseractDpi = Math.round(imageSource.dpi() * 1.5f);
+        int tesseractDpi = Math.round(imageSource.dpi());
 
         TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, ENG);
         api.SetVariable("tessedit_char_whitelist", PAGE_WHITELIST);
