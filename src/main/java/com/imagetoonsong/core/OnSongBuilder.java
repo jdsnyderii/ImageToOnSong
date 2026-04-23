@@ -8,19 +8,20 @@ public class OnSongBuilder {
 
     private final ChordDetector chordDetector = new ChordDetector();
 
-    public String buildOnSong(String rawOcrText, String title, String artist) {
+    public String buildOnSong(String rawOcrText, String title, String artist, boolean emptyTextBox) {
         System.out.printf("rawOCRText: %s\n", rawOcrText);
 
         StringBuilder sb = new StringBuilder();
 
-        // Metadata (OnSong format)
-        sb.append(title != null && !title.isEmpty() ? title : "Untitled Song").append("\n");
-        sb.append(artist != null && !artist.isEmpty() ? artist : "Unknown Artist").append("\n");
-        sb.append("Key: C").append("\n");
-        sb.append("Tempo: 96").append("\n");
-        sb.append("Time: 4/4").append("\n");
-        sb.append("\n");
-
+        if (emptyTextBox) {
+            // Metadata (OnSong format)
+            sb.append(title != null && !title.isEmpty() ? title : "Untitled Song").append("\n");
+            sb.append(artist != null && !artist.isEmpty() ? artist : "Unknown Artist").append("\n");
+            sb.append("Key: C").append("\n");
+            sb.append("Tempo: 96").append("\n");
+            sb.append("Time: 4/4").append("\n");
+            sb.append("\n");
+        }
         String[] lines = rawOcrText.split("\n");
 
         int lineNumber = 0;

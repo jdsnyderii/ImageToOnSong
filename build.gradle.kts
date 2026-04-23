@@ -3,7 +3,7 @@ plugins {
     id("application")
     id("com.gradleup.shadow") version "9.3.0"          // fat JAR for dev / standalone dist
     id("org.openjfx.javafxplugin") version "0.1.0"
-    id("org.beryx.runtime") version "1.13.1"            // replaces de.infolektuell.jpackage
+    id("org.beryx.runtime") version "2.0.1"
 }
 
 group = "com.imagetoonsong"
@@ -11,13 +11,17 @@ version = "1.0.0"
 
 javafx {
     version = "21"
-    modules = listOf("javafx.controls", "javafx.fxml", "javafx.graphics")
+    modules = listOf("javafx.base", "javafx.controls", "javafx.fxml", "javafx.graphics")
 }
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
-        vendor.set(JvmVendorSpec.AZUL)                 // Azul Zulu; auto-provisioned via foojay
+        languageVersion.set(JavaLanguageVersion.of(25))
+        vendor = JvmVendorSpec.matching("BellSoft")
+
+//        vendor.set(JvmVendorSpec.AZUL)                 // Azul Zulu; auto-provisioned via foojay
+        // Add this line to request the version that includes JavaFX
+//        implementation.set(JvmImplementation.VENDOR_SPECIFIC)
     }
 }
 
@@ -79,7 +83,12 @@ dependencies {
 
 application {
     applicationName = "ImageToOnSong"
-    mainClass = "com.imagetoonsong.MainApp"
+    mainClass = "com.imagetoonsong.Main"
+}
+
+
+tasks.jpackage {
+    dependsOn(tasks.shadowJar)
 }
 
 // ── Shadow JAR ────────────────────────────────────────────────────────────────
@@ -87,7 +96,12 @@ application {
 // NOT used by the runtime/jpackage tasks — badass-runtime handles its own
 // dependency collection for the .app bundle.
 tasks.shadowJar {
-    archiveBaseName.set("myapp")
+    manifest {
+        attributes["Main-Class"] = "com.imagetoonsong.Main"
+    }
+    // Optional: Ensure the archive name is exactly what jpackage expects
+    archiveFileName.set("ImageToOnSong-1.0.0-all.jar")
+    archiveBaseName.set("ImageToOnSong-" + project.version.toString() + "-all")
     archiveClassifier.set("")
     archiveVersion.set("")
     isZip64 = true
@@ -136,11 +150,15 @@ runtime {
         "javafx.base"
     ))
 
+
     jpackage {
         imageName       = "ImageToOnSong"
         installerName   = "ImageToOnSong"
         installerType   = "dmg"
         appVersion      = project.version.toString()
+
+        mainJar = "ImageToOnSong-1.0.0-all.jar"
+        mainClass = "com.imagetoonsong.Main" // Ensure this matches your actual package path
 
         // If Gradle toolchain resolution doesn't wire jpackage automatically,
         // uncomment and point this at your Azul Zulu 21 arm64 install:

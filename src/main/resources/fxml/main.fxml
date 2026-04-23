@@ -57,6 +57,7 @@
                           VBox.vgrow="ALWAYS"/>
 
                 <HBox spacing="10" alignment="CENTER_RIGHT">
+                    <Button text="⌫  Clear Text" fx:id="clearTextButton"/>
                     <Button text="📋 Copy to Clipboard" fx:id="copyButton"/>
                     <Button text="📥 Download .onsong" fx:id="downloadButton" style="-fx-font-weight: bold;"/>
                 </HBox>

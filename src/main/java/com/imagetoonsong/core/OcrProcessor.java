@@ -118,7 +118,6 @@ public class OcrProcessor {
         TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, ENG);
         api.SetVariable("tessedit_char_whitelist", PAGE_WHITELIST);
 
-
         Java2DFrameConverter biConverter = new Java2DFrameConverter();
         OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
 

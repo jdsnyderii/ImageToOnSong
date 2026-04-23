@@ -33,6 +33,7 @@ public class MainController {
     @FXML private Button convertButton;
     @FXML private Button copyButton;
     @FXML private Button downloadButton;
+    @FXML public Button clearTextButton;
     @FXML private ComboBox<String> styleCombo;
 
     private String currentOnSongText = "";
@@ -46,6 +47,7 @@ public class MainController {
         convertButton.setOnAction(e -> convertImage());
         copyButton.setOnAction(e -> copyToClipboard());
         downloadButton.setOnAction(e -> downloadFile());
+        clearTextButton.setOnAction(e -> clearText());
 
         // Drag & Drop support
         imageView.setOnDragOver(this::handleDragOver);
@@ -131,7 +133,6 @@ public class MainController {
         progressIndicator.setVisible(true);
         statusLabel.setText("Starting OCR...");
         convertButton.setDisable(true);
-        resultTextArea.setText("");
 
         executor.submit(() -> {
             try {
@@ -147,13 +148,15 @@ public class MainController {
                 long duration = System.currentTimeMillis() - startTime;
 
                 OnSongBuilder builder = new OnSongBuilder();
-                String result = builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist");
+                boolean emptyTextBox = resultTextArea.getText().isEmpty();
+                String result = builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
 
                 System.out.println("OnSong build complete");
 
                 Platform.runLater(() -> {
                     currentOnSongText = result;
-                    resultTextArea.setText(result.isEmpty() ? "No text detected." : result);
+                    String resultText = result.isEmpty() ? "No text detected." : result;
+                    resultTextArea.appendText(resultText);
                     statusLabel.setText("✅ Done in " + (duration / 1000) + " seconds");
                     progressIndicator.setVisible(false);
                     convertButton.setDisable(false);
@@ -182,6 +185,10 @@ public class MainController {
         content.putString(currentOnSongText);
         clipboard.setContent(content);
         statusLabel.setText("Copied to clipboard!");
+    }
+
+    private void clearText() {
+        resultTextArea.setText("");
     }
 
     private void downloadFile() {

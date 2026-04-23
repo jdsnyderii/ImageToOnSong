@@ -16,7 +16,7 @@ import java.nio.file.Paths;
  * class as a plain launcher avoids a "JavaFX runtime components are missing"
  * error that appears only in the packaged .app, not during `./gradlew run`.
  */
-public class MainApp {
+public class Main {
 
     public static void main(String[] args) {
 
