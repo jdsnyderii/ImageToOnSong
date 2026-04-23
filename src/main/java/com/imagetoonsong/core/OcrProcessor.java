@@ -113,7 +113,7 @@ public class OcrProcessor {
      */
     public String extractText(ImageSource imageSource) throws Exception, UncheckedIOException {
         System.out.println("=== Starting Bytedeco Tesseract OCR ===");
-        int tesseractDpi = imageSource.dpi();
+        int tesseractDpi = Math.round(imageSource.dpi() * 1.5f);
 
         TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, ENG);
         api.SetVariable("tessedit_char_whitelist", PAGE_WHITELIST);
@@ -345,12 +345,12 @@ public class OcrProcessor {
      */
     private static boolean looksLikeStrummingLine(String lineText) {
         if (lineText == null || lineText.length() < 5) return false;
-        boolean hasPipeLike  = lineText.chars().anyMatch(c -> "|[]{}".indexOf(c) >= 0);
+        boolean hasPipeLike  = lineText.chars().anyMatch(c -> "|[]{}I".indexOf(c) >= 0);
         long    slashLike    = lineText.chars().filter(c -> "/1lL".indexOf(c) >= 0).count();
         long    consonantLike = lineText.chars().filter(c -> "THVIN".indexOf(c) >=0).count();
         boolean hasChordRoot = lineText.chars().anyMatch(c -> "ABCDEFG".indexOf(c) >= 0);
         boolean sectionHeader = SectionDetector.detectSectionCaseInsensitive(lineText);
-        return (hasPipeLike || slashLike >= 2) && hasChordRoot && consonantLike >= 3 && !sectionHeader;
+        return (hasPipeLike || slashLike >= 2 || consonantLike >= 3) && hasChordRoot && !sectionHeader;
     }
 
     /**
@@ -518,8 +518,8 @@ public class OcrProcessor {
                     String glyph = ptr.getString().stripTrailing();
                     if (!glyph.isEmpty()) {
                         recognizedCount++;
-                        if (glyph.equals("/")) glyph = "[/]";
-                        if (glyph.equals("|")) glyph = "[|]";
+                        if (glyph.equals("/") && !endsInChordCharacter(result)) glyph = "[/]";
+                        if (glyph.equals("|") && !endsInChordCharacter(result)) glyph = "[|]";
                         result.append(glyph);
                     } else {
                         // ── FALLBACK: retry with PSM_SINGLE_WORD ─────────────────────
@@ -552,6 +552,9 @@ public class OcrProcessor {
         return new MatchedCharacterResults(recognizedCount < boundingBoxes.size(), result.toString().stripTrailing());
     }
 
+    private static boolean endsInChordCharacter(StringBuilder buf) {
+        return buf.substring(buf.length() - 1).matches("[A-G]");
+    }
     /**
      * Parses "bbox x_left y_top x_right y_bottom" from a Tesseract hOCR title string.
      * Returns int[4] = { xLeft, yTop, xRight, yBottom } or null on failure.
@@ -595,7 +598,7 @@ public class OcrProcessor {
         }
 
         resize(gray, upscaled,
-                new Size(gray.cols() * 2, gray.rows() * 2), 0, 0, INTER_LANCZOS4);
+                new Size(gray.cols() * 3, gray.rows() * 3), 0, 0, INTER_LANCZOS4);
         normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
         threshold(normalized, binary, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
 

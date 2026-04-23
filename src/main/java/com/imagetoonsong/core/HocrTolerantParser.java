@@ -44,10 +44,10 @@ public class HocrTolerantParser {
      */
     public static String parseHocrToString(Document doc, Map<Integer, String> strummingOverrides) {
 
-        List<WordEntry> allWords = extractWords(doc);
-        if (allWords.isEmpty()) return "";
+//        List<WordEntry> allWords = extractWords(doc);
+//        if (allWords.isEmpty()) return "";
 
-        List<LogicalLine> lines = clusterIntoLines(allWords, Y_TOLERANCE);
+        List<LogicalLine> lines = clusterIntoLines(doc, Y_TOLERANCE);
 
         lines.sort(Comparator.comparingInt(l -> l.yTop));
         for (LogicalLine line : lines) {
@@ -73,38 +73,136 @@ public class HocrTolerantParser {
     }
 
     // ── Step 2 : line clustering ────────────────────────────────────────────────
+    private static List<LogicalLine> clusterIntoLines(Document doc, int tolerance) {
 
-    private static List<LogicalLine> clusterIntoLines(List<WordEntry> words, int tolerance) {
-        words.sort(Comparator.comparingInt(w -> w.yTop));
+        // ── Pass 1: build one LogicalLine per ocr_line span ──────────────────
+        // Using ocr_line as the anchor fixes the word-yTop-outside-line-bbox
+        // problem (e.g. tall ascenders reported above their containing line).
+        List<LogicalLine> raw = new ArrayList<>();
 
-        List<LogicalLine> lines = new ArrayList<>();
+        for (Element lineSpan : doc.select("span.ocr_line")) {
+            int[] lineBbox = parseBbox(lineSpan.attr("title"));
+            if (lineBbox == null) continue;
 
-        for (WordEntry word : words) {
-            LogicalLine best     = null;
-            int         bestDist = Integer.MAX_VALUE;
+            LogicalLine logicalLine = new LogicalLine(lineBbox[1]);
 
-            for (LogicalLine line : lines) {
-                int dist = Math.abs(line.yTop - word.yTop);
-                if (dist <= tolerance && dist < bestDist) {
-                    best     = line;
-                    bestDist = dist;
+            for (Element wordSpan : lineSpan.select("span.ocrx_word")) {
+                int[] wordBbox = parseBbox(wordSpan.attr("title"));
+                if (wordBbox == null) continue;
+                String text = wordSpan.text().trim();
+                if (!text.isEmpty()) {
+                    logicalLine.words.add(
+                            new WordEntry(text,
+                                    wordBbox[0], wordBbox[1],
+                                    wordBbox[2], wordBbox[3]));
                 }
             }
 
-            if (best != null) {
-                best.words.add(word);
-                // Running average keeps cluster centre from locking to first word
-                best.yTop = (best.yTop * (best.words.size() - 1) + word.yTop)
-                        / best.words.size();
-            } else {
-                LogicalLine newLine = new LogicalLine(word.yTop);
-                newLine.words.add(word);
-                lines.add(newLine);
+            if (!logicalLine.words.isEmpty()) {
+                raw.add(logicalLine);
             }
         }
 
-        return lines;
+        // Sort top-to-bottom before merging
+        raw.sort(Comparator.comparingInt(l -> l.yTop));
+
+        // ── Pass 2: merge LogicalLines whose yTops are within tolerance ───────
+        //
+        // Tesseract splits a single visual line across multiple ocr_carea blocks
+        // when it detects column boundaries or layout discontinuities.
+        // e.g. "Na na na | na na | na na | na na naa" → 4 separate ocr_lines
+        // all at yTop ≈ 4307, which should be one logical line.
+        //
+        // This is intentionally at the LogicalLine level (not word level) so we
+        // still benefit from ocr_line anchoring for word-yTop outliers.
+        List<LogicalLine> merged = new ArrayList<>();
+
+        for (LogicalLine current : raw) {
+            if (merged.isEmpty()) {
+                merged.add(current);
+                continue;
+            }
+
+            LogicalLine last = merged.get(merged.size() - 1);
+            if (Math.abs(current.yTop - last.yTop) <= tolerance) {
+                // Same visual line — absorb words into the existing LogicalLine
+                last.words.addAll(current.words);
+                // Keep yTop as the minimum (topmost) of the two
+                last.yTop = Math.min(last.yTop, current.yTop);
+            } else {
+                merged.add(current);
+            }
+        }
+
+        // Sort words left-to-right within each merged line
+        for (LogicalLine line : merged) {
+            line.words.sort(Comparator.comparingInt(w -> w.xLeft));
+        }
+
+        return merged;
     }
+//    private static List<LogicalLine> clusterIntoLines(Document doc, int tolerance) {
+//        List<LogicalLine> lines = new ArrayList<>();
+//
+//        for (Element lineSpan : doc.select("span.ocr_line")) {
+//            int[] lineBbox = parseBbox(lineSpan.attr("title"));
+//            if (lineBbox == null) continue;
+//
+//            // Use the ocr_line bbox yTop as the authoritative anchor for this
+//            // line — individual word yTops can be reported outside the line bbox
+//            // by Tesseract (e.g. tall ascenders measured differently), which
+//            // causes words to cluster into phantom lines.
+//            int lineYTop = lineBbox[1];
+//            LogicalLine logicalLine = new LogicalLine(lineYTop);
+//
+//            for (Element wordSpan : lineSpan.select("span.ocrx_word")) {
+//                int[] wordBbox = parseBbox(wordSpan.attr("title"));
+//                if (wordBbox == null) continue;
+//                String text = wordSpan.text().trim();
+//                if (text.isEmpty()) continue;
+//                logicalLine.words.add(
+//                        new WordEntry(text, wordBbox[0], wordBbox[1], wordBbox[2], wordBbox[3]));
+//            }
+//
+//            if (!logicalLine.words.isEmpty()) {
+//                lines.add(logicalLine);
+//            }
+//        }
+//
+//        return lines;
+//    }
+
+//    private static List<LogicalLine> clusterIntoLines(List<WordEntry> words, int tolerance) {
+//        words.sort(Comparator.comparingInt(w -> w.yTop));
+//
+//        List<LogicalLine> lines = new ArrayList<>();
+//
+//        for (WordEntry word : words) {
+//            LogicalLine best     = null;
+//            int         bestDist = Integer.MAX_VALUE;
+//
+//            for (LogicalLine line : lines) {
+//                int dist = Math.abs(line.yTop - word.yTop);
+//                if (dist <= tolerance && dist < bestDist) {
+//                    best     = line;
+//                    bestDist = dist;
+//                }
+//            }
+//
+//            if (best != null) {
+//                best.words.add(word);
+//                // Running average keeps cluster centre from locking to first word
+//                best.yTop = (best.yTop * (best.words.size() - 1) + word.yTop)
+//                        / best.words.size();
+//            } else {
+//                LogicalLine newLine = new LogicalLine(word.yTop);
+//                newLine.words.add(word);
+//                lines.add(newLine);
+//            }
+//        }
+//
+//        return lines;
+//    }
 
     // ── Step 3 : render ─────────────────────────────────────────────────────────
 
@@ -141,12 +239,38 @@ public class HocrTolerantParser {
             } else if (isStrummingLine(line)) {
                 sb.append(renderStrummingLine(line));
 
-                // ── PRIORITY 2: chord line above a lyric line ─────────────────────
-            } else if (isChordLine(line)
-                    && i + 1 < lines.size()
-                    && !isChordLine(lines.get(i + 1))) {
-                sb.append(mergeChordIntoLyric(line, lines.get(i + 1)));
-                i++;
+                // ── PRIORITY 2: chord line(s) above a lyric line ─────────────────
+                //
+                // Tesseract sometimes splits chords that sit above the same lyric
+                // into separate ocr_line spans — e.g. "D" and "G/D" each get their
+                // own line. The old word-based clustering accidentally merged these
+                // because their yTops were close. The new ocr_line-based clustering
+                // keeps them separate, so we must consume ALL consecutive chord lines
+                // and merge their words into one combined chord line before merging
+                // with the lyric below.
+            } else if (isChordLine(line)) {
+
+                // Collect all consecutive chord lines
+                List<LogicalLine> chordGroup = new ArrayList<>();
+                chordGroup.add(line);
+                while (i + 1 < lines.size() && isChordLine(lines.get(i + 1))) {
+                    i++;
+                    chordGroup.add(lines.get(i));
+                }
+
+                // Check whether a lyric line follows the chord group
+                boolean hasLyricBelow = i + 1 < lines.size()
+                        && !isChordLine(lines.get(i + 1))
+                        && !isStrummingLine(lines.get(i + 1));
+
+                if (hasLyricBelow) {
+                    LogicalLine combined = mergeChordLines(chordGroup);
+                    sb.append(mergeChordIntoLyric(combined, lines.get(i + 1)));
+                    i++;
+                } else {
+                    // No lyric below — emit combined chord line as plain text
+                    sb.append(wordsToString(mergeChordLines(chordGroup)));
+                }
 
                 // ── PRIORITY 3: plain output ──────────────────────────────────────
             } else {
@@ -157,6 +281,26 @@ public class HocrTolerantParser {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Merges multiple chord LogicalLines into one, sorting all words by xLeft.
+     *
+     * Used when Tesseract splits chords above a single lyric line into separate
+     * ocr_line spans. The merged line is then passed to mergeChordIntoLyric()
+     * as if it were one chord line, preserving correct horizontal positioning.
+     */
+    private static LogicalLine mergeChordLines(List<LogicalLine> chordLines) {
+        // Use the yTop of the first (topmost) chord line as the anchor
+        LogicalLine combined = new LogicalLine(chordLines.get(0).yTop);
+        for (LogicalLine cl : chordLines) {
+            combined.words.addAll(cl.words);
+        }
+        // Sort all words left-to-right so mergeChordIntoLyric() sees them
+        // in the correct horizontal order regardless of which ocr_line they
+        // came from
+        combined.words.sort(Comparator.comparingInt(w -> w.xLeft));
+        return combined;
     }
 
     /**
