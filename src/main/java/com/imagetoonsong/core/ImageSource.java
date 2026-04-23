@@ -1,11 +1,18 @@
 package com.imagetoonsong.core;
 
+import javafx.application.Platform;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.*;
 import javafx.scene.image.Image;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+
+import static com.imagetoonsong.core.ImageMetadata.estimateDpiFromDimensions;
 
 /**
  * Canonical image container for the OCR pipeline.
@@ -59,11 +66,63 @@ public record ImageSource(Image image, int dpi, String source) {
      * on a standard display 96.
      */
     public static ImageSource fromClipboard(Image fxImage) {
-        Image rgbImage = ImageSource.convertToARGB(fxImage);
-        int dpi = 144;
-        return new ImageSource(rgbImage, dpi, "clipboard");
+        Image normalized = flattenToCanvas(fxImage);
+        int dpi = estimateDpiFromDimensions((int) normalized.getWidth());
+        System.out.printf("[Clipboard] original=%dx%d  normalized=%dx%d  dpi=%d%n",
+                (int) fxImage.getWidth(),   (int) fxImage.getHeight(),
+                (int) normalized.getWidth(), (int) normalized.getHeight(), dpi);
+        return new ImageSource(normalized, dpi, "clipboard");
     }
 
+    /**
+     * Flattens a JavaFX Image by rendering it onto a Canvas with a white
+     * background and snapshotting the result into a WritableImage.
+     *
+     * This normalizes clipboard images to match the quality of disk screenshots:
+     *  - Composites any transparency against white
+     *  - Resolves colour space differences through JavaFX's render pipeline
+     *  - Produces a clean sRGB WritableImage identical in character to a
+     *    PNG snapshot saved by macOS
+     *
+     * Must be called on the JavaFX Application Thread.
+     */
+    private static Image flattenToCanvas(Image source) {
+        if (Platform.isFxApplicationThread()) {
+            return doFlatten(source);
+        }
+
+        // Called from background thread — marshal to FX thread and wait
+        CompletableFuture<Image> future = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                future.complete(doFlatten(source));
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+
+        try {
+            return future.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            System.err.println("[Clipboard] Canvas flatten failed, using raw image: " + e.getMessage());
+            return source; // fallback to raw
+        }
+    }
+
+    private static Image doFlatten(Image source) {
+        int w = (int) source.getWidth();
+        int h = (int) source.getHeight();
+
+        Canvas canvas = new Canvas(w, h);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+        gc.setFill(javafx.scene.paint.Color.WHITE);
+        gc.fillRect(0, 0, w, h);
+        gc.drawImage(source, 0, 0, w, h);
+
+        WritableImage result = new WritableImage(w, h);
+        canvas.snapshot(null, result);
+        return result;
+    }
     // ── Pixel dimensions (convenience, avoids casting at call sites) ─────────
 
     public int width()  { return (int) image.getWidth();  }

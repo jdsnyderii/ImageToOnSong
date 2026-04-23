@@ -45,6 +45,13 @@ public class ImageMetadata {
         return DEFAULT_DPI;
     }
 
+    public static int estimateDpiFromDimensions(int width) {
+        if (width < 500) {
+            return DEFAULT_DPI;
+        }
+        return RETINA_DPI;
+    }
+
     private static int estimateMacResolution(File file) {
         // High-level logic: If no metadata exists, we often check the
         // pixel dimensions via ImageIO. If width > 2500 on a small file,

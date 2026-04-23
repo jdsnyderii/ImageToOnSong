@@ -38,6 +38,7 @@ public class OcrProcessor {
 
     public static final String PAGE_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" +
             "0123456789#/()[]., '-{}|";
+    public static final String ENG = "eng";
 
     public OcrProcessor() throws Exception {}
 
@@ -92,7 +93,7 @@ public class OcrProcessor {
      */
     private static final double BARLINE_ASPECT_RATIO_THRESHOLD = 0.30;
 
-    private static final int PREPROCESSING_SCALE = 3;
+    private static final int PREPROCESSING_SCALE = 4;
 
     // ════════════════════════════════════════════════════════════════════════
     // MAIN OCR PIPELINE
@@ -112,13 +113,11 @@ public class OcrProcessor {
      */
     public String extractText(ImageSource imageSource) throws Exception, UncheckedIOException {
         System.out.println("=== Starting Bytedeco Tesseract OCR ===");
-        int tesseractDpi = imageSource.dpi() ; // * PREPROCESSING_SCALE;
+        int tesseractDpi = imageSource.dpi();
 
-        TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, "eng");
+        TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, ENG);
         api.SetVariable("tessedit_char_whitelist", PAGE_WHITELIST);
 
-        api.SetVariable("user_defined_dpi", String.valueOf(tesseractDpi));
-        System.out.printf("Using scaled DPI: %d%n", tesseractDpi);
 
         Java2DFrameConverter biConverter = new Java2DFrameConverter();
         OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
@@ -134,8 +133,7 @@ public class OcrProcessor {
                 new Scalar(255, 255, 255, 255));
         processed.release();
 
-        api.SetImage(padded.data(), padded.cols(), padded.rows(),
-                padded.channels(), (int) padded.step());
+        setTessImageParameters(api, padded, tesseractDpi);
 
         // ── First pass ───────────────────────────────────────────────────────
         BytePointer outText = api.GetHOCRText(0);
@@ -159,25 +157,19 @@ public class OcrProcessor {
         return result;
     }
 
-    public Mat imageToMatBytedeco(Image image) {
-        int width = (int) image.getWidth();
-        int height = (int) image.getHeight();
-
-        // 1. Extract bytes from JavaFX
-        byte[] buffer = new byte[width * height * 4];
-        PixelReader reader = image.getPixelReader();
-
-        // Use BGRA to match OpenCV's 4-channel native order
-        reader.getPixels(0, 0, width, height,
-                WritablePixelFormat.getByteBgraInstance(),
-                buffer, 0, width * 4);
-
-        // 2. Wrap the byte array in a JavaCPP BytePointer
-        BytePointer ptr = new BytePointer(buffer);
-
-        // 3. Construct the Mat
-        // CV_8UC4 = 8-bit Unsigned, 4 channels (BGRA)
-        return new Mat(height, width, CV_8UC4, ptr);
+    /**
+     * This ensure the correct order of construction of setting the image and the resolution used for the image
+     * @param api
+     * @param image
+     * @param tesseractDpi
+     */
+    protected void setTessImageParameters(TessBaseAPI api, Mat image, int tesseractDpi) {
+        api.SetVariable("user_defined_dpi", String.valueOf(tesseractDpi));
+        api.SetImage(image.data(), image.cols(), image.rows(),
+                image.channels(), (int) image.step());
+        api.SetVariable("user_defined_dpi", String.valueOf(tesseractDpi));
+        api.SetSourceResolution(tesseractDpi);
+        System.out.printf("Using scaled DPI: %d%n", tesseractDpi);
     }
 
     protected TessBaseAPI createTessAPI(int pageSegMode, String language) {
@@ -355,8 +347,10 @@ public class OcrProcessor {
         if (lineText == null || lineText.length() < 5) return false;
         boolean hasPipeLike  = lineText.chars().anyMatch(c -> "|[]{}".indexOf(c) >= 0);
         long    slashLike    = lineText.chars().filter(c -> "/1lL".indexOf(c) >= 0).count();
+        long    consonantLike = lineText.chars().filter(c -> "THVIN".indexOf(c) >=0).count();
         boolean hasChordRoot = lineText.chars().anyMatch(c -> "ABCDEFG".indexOf(c) >= 0);
-        return hasPipeLike && slashLike >= 2 && hasChordRoot;
+        boolean sectionHeader = SectionDetector.detectSectionCaseInsensitive(lineText);
+        return (hasPipeLike || slashLike >= 2) && hasChordRoot && consonantLike >= 3 && !sectionHeader;
     }
 
     /**
@@ -398,7 +392,7 @@ public class OcrProcessor {
      * forgiving of whitespace margins around the character.
      */
     private String retryWithSingleWord(Mat charCrop, int dpi) {
-        TessBaseAPI fallback = createTessAPI(tesseract.PSM_SINGLE_WORD, "eng");
+        TessBaseAPI fallback = createTessAPI(tesseract.PSM_SINGLE_WORD, ENG);
         try {
             fallback.SetVariable("tessedit_char_whitelist",  STRUMMING_WHITELIST);
             fallback.SetVariable("load_punc_dawg",           "0");
@@ -476,7 +470,7 @@ public class OcrProcessor {
 
         int recognizedCount = 0;
 
-        TessBaseAPI api = createTessAPI(tesseract.PSM_SINGLE_CHAR, "eng");
+        TessBaseAPI api = createTessAPI(tesseract.PSM_SINGLE_CHAR, ENG);
         try {
             api.SetVariable("tessedit_char_whitelist",   STRUMMING_WHITELIST);
             api.SetVariable("load_punc_dawg",            "0");
@@ -485,7 +479,6 @@ public class OcrProcessor {
             api.SetVariable("load_bigram_dawg",          "0");
             api.SetVariable("tessedit_enable_doc_dict",  "0");
             api.SetVariable("tessedit_minimal_rejection","0");
-            api.SetVariable("user_defined_dpi",          String.valueOf(dpi));
 
             for (Rect rect : boundingBoxes) {
 
@@ -517,8 +510,8 @@ public class OcrProcessor {
                 int h  = Math.min(gray.rows() - y, rect.height() + (px * 2));
 
                 Mat charCrop = new Mat(gray, new Rect(x, y, w, h));
-                api.SetImage(charCrop.data(), charCrop.cols(), charCrop.rows(),
-                        charCrop.channels(), (int) charCrop.step());
+                setTessImageParameters(api, charCrop, dpi);
+
 
                 BytePointer ptr = api.GetUTF8Text();
                 if (ptr != null) {

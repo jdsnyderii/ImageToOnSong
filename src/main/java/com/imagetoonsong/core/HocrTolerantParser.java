@@ -365,6 +365,10 @@ public class HocrTolerantParser {
 
     // ── Chord+lyric merging ──────────────────────────────────────────────────────
 
+    private static String patchWordText(String text) {
+        return text.replace('|', 'I');
+    }
+
     private static String mergeChordIntoLyric(LogicalLine chordLine, LogicalLine lyricLine) {
         List<WordEntry> chords = new ArrayList<>(chordLine.words);
         List<WordEntry> lyrics = lyricLine.words;
@@ -384,9 +388,9 @@ public class HocrTolerantParser {
             }
 
             if (inWord.isEmpty()) {
-                sb.append(word.text);
+                sb.append(patchWordText(word.text));
             } else {
-                String text       = word.text;
+                String text       = patchWordText(word.text);
                 int    pixelWidth = word.xRight - word.xLeft;
                 int    charCursor = 0;
 

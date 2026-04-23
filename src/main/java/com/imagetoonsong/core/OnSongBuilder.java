@@ -34,7 +34,7 @@ public class OnSongBuilder {
             }
 
             // Detect possible section headers (Verse 1, Chorus, Bridge, etc.)
-            if (line.matches("(?i)^[^a-zA-Z]*(verse|chorus|bridge|intro|outro|pre-?chorus|tag|interlude|instrumental|break?down|ending)[^a-zA-Z]*.*")) {
+            if (SectionDetector.detectSectionCaseInsensitive(line)) {
                 sb.append("\n");
                 System.out.printf("%d : Found section %s\n", lineNumber, line);
                 sb.append(normalizeSection(line)).append("\n");
@@ -59,7 +59,7 @@ public class OnSongBuilder {
             boolean prevHasChord = i > 0 && hasChord.matcher(lines[i - 1]).find();
             boolean nextHasChord = i < lines.length - 1 && hasChord.matcher(lines[i + 1]).find();
             boolean thisHasChord = hasChord.matcher(line).find();
-            boolean isSectionHeader = isSectionHeader(line);
+            boolean isSectionHeader = SectionDetector.isSectionHeader(line);
             boolean isBlank = line.isBlank();
 
             if (!isSectionHeader && !isBlank && !thisHasChord && (prevHasChord || nextHasChord)) {
@@ -71,10 +71,6 @@ public class OnSongBuilder {
         return sb.toString();
     }
 
-    private static boolean isSectionHeader(String line) {
-        return line.matches(
-                "(?i)^(Verse|Chorus|Bridge|Intro|Outro|Pre-?Chorus|Tag|Instrumental|Interlude|Break?down|Ending).*:$");
-    }
     private static String normalizeSection(String raw) {
         if (raw == null || raw.isBlank()) return raw;
 
