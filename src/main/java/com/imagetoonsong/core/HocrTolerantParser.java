@@ -141,68 +141,6 @@ public class HocrTolerantParser {
 
         return merged;
     }
-//    private static List<LogicalLine> clusterIntoLines(Document doc, int tolerance) {
-//        List<LogicalLine> lines = new ArrayList<>();
-//
-//        for (Element lineSpan : doc.select("span.ocr_line")) {
-//            int[] lineBbox = parseBbox(lineSpan.attr("title"));
-//            if (lineBbox == null) continue;
-//
-//            // Use the ocr_line bbox yTop as the authoritative anchor for this
-//            // line — individual word yTops can be reported outside the line bbox
-//            // by Tesseract (e.g. tall ascenders measured differently), which
-//            // causes words to cluster into phantom lines.
-//            int lineYTop = lineBbox[1];
-//            LogicalLine logicalLine = new LogicalLine(lineYTop);
-//
-//            for (Element wordSpan : lineSpan.select("span.ocrx_word")) {
-//                int[] wordBbox = parseBbox(wordSpan.attr("title"));
-//                if (wordBbox == null) continue;
-//                String text = wordSpan.text().trim();
-//                if (text.isEmpty()) continue;
-//                logicalLine.words.add(
-//                        new WordEntry(text, wordBbox[0], wordBbox[1], wordBbox[2], wordBbox[3]));
-//            }
-//
-//            if (!logicalLine.words.isEmpty()) {
-//                lines.add(logicalLine);
-//            }
-//        }
-//
-//        return lines;
-//    }
-
-//    private static List<LogicalLine> clusterIntoLines(List<WordEntry> words, int tolerance) {
-//        words.sort(Comparator.comparingInt(w -> w.yTop));
-//
-//        List<LogicalLine> lines = new ArrayList<>();
-//
-//        for (WordEntry word : words) {
-//            LogicalLine best     = null;
-//            int         bestDist = Integer.MAX_VALUE;
-//
-//            for (LogicalLine line : lines) {
-//                int dist = Math.abs(line.yTop - word.yTop);
-//                if (dist <= tolerance && dist < bestDist) {
-//                    best     = line;
-//                    bestDist = dist;
-//                }
-//            }
-//
-//            if (best != null) {
-//                best.words.add(word);
-//                // Running average keeps cluster centre from locking to first word
-//                best.yTop = (best.yTop * (best.words.size() - 1) + word.yTop)
-//                        / best.words.size();
-//            } else {
-//                LogicalLine newLine = new LogicalLine(word.yTop);
-//                newLine.words.add(word);
-//                lines.add(newLine);
-//            }
-//        }
-//
-//        return lines;
-//    }
 
     // ── Step 3 : render ─────────────────────────────────────────────────────────
 
@@ -581,6 +519,15 @@ public class HocrTolerantParser {
             "1", "l"
     );
 
+    /**
+     * FIX 2: Ghosting removal is now precise — only strips second char when it is
+     * the lowercase echo of the root (e.g. "Cc7" → 'c' == toLowerCase('C') → "C7").
+     * Previous logic stripped ANY lowercase non-m/b second char, which corrupted
+     * legitimate quality suffixes: "Dsus4" → 's' != 'm'/'b' → wrongly stripped to "Dus4".
+     * Now: "Dsus4" → 's' != toLowerCase('D')='d' → kept → "Dsus4" ✓
+     *      "Cc7"   → 'c' == toLowerCase('C')='c' → stripped → "C7" ✓
+     *      "Gg"    → 'g' == toLowerCase('G')='g' → stripped → "G" ✓
+     */
     private static String normalizeChordToken(String raw) {
         String s = raw;
         for (Map.Entry<String, String> e : OCR_CORRECTIONS.entrySet()) {
@@ -589,10 +536,13 @@ public class HocrTolerantParser {
         if (!s.isEmpty() && Character.isLowerCase(s.charAt(0))) {
             s = Character.toUpperCase(s.charAt(0)) + s.substring(1);
         }
+        // Only remove second char if it's a true OCR ghost (lowercase echo of root)
         if (s.length() >= 2) {
+            char first  = s.charAt(0);
             char second = s.charAt(1);
-            if (Character.isLowerCase(second) && second != 'm' && second != 'b') {
-                s = s.charAt(0) + s.substring(2);
+            if (Character.isLowerCase(second)
+                    && second == Character.toLowerCase(first)) {
+                s = String.valueOf(first) + s.substring(2);
             }
         }
         return s;

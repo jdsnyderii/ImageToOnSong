@@ -1,3 +1,5 @@
+import org.gradle.internal.os.OperatingSystem
+
 plugins {
     java
     id("application")
@@ -100,7 +102,7 @@ tasks.shadowJar {
         attributes["Main-Class"] = "com.imagetoonsong.Main"
     }
     // Optional: Ensure the archive name is exactly what jpackage expects
-    archiveFileName.set("ImageToOnSong-1.0.0-all.jar")
+    archiveFileName.set("ImageToOnSong-" + project.version.toString() + "-all.jar")
     archiveBaseName.set("ImageToOnSong-" + project.version.toString() + "-all")
     archiveClassifier.set("")
     archiveVersion.set("")
@@ -113,6 +115,13 @@ tasks.shadowJar {
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
+}
+
+tasks.withType<JavaExec> {
+    jvmArgs(
+        "--enable-native-access=javafx.graphics",
+        "--enable-native-access=ALL-UNNAMED"
+    )
 }
 
 // ── Runtime image + DMG installer (Phase 1: macOS arm64) ─────────────────────
@@ -160,19 +169,10 @@ runtime {
         mainJar = "ImageToOnSong-1.0.0-all.jar"
         mainClass = "com.imagetoonsong.Main" // Ensure this matches your actual package path
 
-        // If Gradle toolchain resolution doesn't wire jpackage automatically,
-        // uncomment and point this at your Azul Zulu 21 arm64 install:
-        // jdkHome = "/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home"
-
         jvmArgs = listOf(
-            "-Dfile.encoding=UTF-8"
-            // NOTE: bytedeco's native cache directory should be set programmatically
-            // in MainApp before any bytedeco class is loaded, e.g.:
-            //   System.setProperty(
-            //       "org.bytedeco.javacpp.cachedir",
-            //       System.getProperty("user.home") + "/Library/Caches/ImageToOnSong"
-            //   )
-            // jpackage cannot reliably expand ~ or $HOME in jvmArgs on macOS.
+            "-Dfile.encoding=UTF-8",
+            "--enable-native-access=javafx.graphics",
+            "--enable-native-access=ALL-UNNAMED"
         )
 
         // Place your .icns icon + any Info.plist overrides here.
