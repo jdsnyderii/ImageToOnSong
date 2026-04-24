@@ -1,5 +1,28 @@
 import org.gradle.internal.os.OperatingSystem
 
+val buildArch: String = layout.buildDirectory.get().asFile.parentFile.name // e.g., 'chordcharter'
+
+// Logic to determine which runtime suffix to apply.
+fun getBytedecoClassifier(actual : Boolean): String {
+    // We strictly use the architecture detected by Gradle
+    if (OperatingSystem.current().isMacOsX) {
+        // 'os.arch' typically returns 'aarch64' on Apple Silicon and 'x86_64' on Intel
+        println(System.getProperty("os.arch"))
+        if (System.getProperty("os.arch") == "aarch64") {
+            return if (actual) "macosx-arm64" else "macosx-x86_64"
+        } else if (System.getProperty("os.arch") == "x86_64") {
+            return if (actual) "macosx-x86_64" else "macosx-arm64"
+        }
+    }
+    // Fail-safe for CI or non-macOS builds
+    return "macosx-" + System.getProperty("os.arch")
+}
+
+val currentNativeClassifier = getBytedecoClassifier(true)
+val filteredNativeClassifier = getBytedecoClassifier(false)
+
+println("Bytedeco Native Suffix detected: $currentNativeClassifier")
+
 plugins {
     java
     id("application")
@@ -49,19 +72,19 @@ dependencies {
 
     // ── JavaCPP runtime ───────────────────────────────────────────────────────
     implementation("org.bytedeco:javacpp:$javacppVersion")
-    runtimeOnly("org.bytedeco:javacpp:$javacppVersion:macosx-arm64")
+    runtimeOnly("org.bytedeco:javacpp:$javacppVersion:$currentNativeClassifier")
 
     // ── OpenBLAS (required by OpenCV on ARM — was the hang cause) ─────────────
     implementation("org.bytedeco:openblas:0.3.31-$javacppVersion")
-    runtimeOnly("org.bytedeco:openblas:0.3.31-$javacppVersion:macosx-arm64")
+    runtimeOnly("org.bytedeco:openblas:0.3.31-$javacppVersion:$currentNativeClassifier")
 
     // ── Tesseract OCR ─────────────────────────────────────────────────────────
     implementation("org.bytedeco:tesseract:$tesseractVersion-$javacppVersion")
-    runtimeOnly("org.bytedeco:tesseract:$tesseractVersion-$javacppVersion:macosx-arm64")
+    runtimeOnly("org.bytedeco:tesseract:$tesseractVersion-$javacppVersion:$currentNativeClassifier")
 
     // ── Leptonica ─────────────────────────────────────────────────────────────
     implementation("org.bytedeco:leptonica:$leptonicaVersion-$javacppVersion")
-    runtimeOnly("org.bytedeco:leptonica:$leptonicaVersion-$javacppVersion:macosx-arm64")
+    runtimeOnly("org.bytedeco:leptonica:$leptonicaVersion-$javacppVersion:$currentNativeClassifier")
 
     // ── OpenCV via JavaCV (version driven by javacv:1.5.13 → 4.13.0) ─────────
     implementation("org.bytedeco:javacv:$javacvVersion") {
@@ -77,7 +100,7 @@ dependencies {
         exclude(group = "org.bytedeco", module = "artoolkitplus")
     }
     implementation("org.bytedeco:opencv:$opencvVersion-$javacppVersion")
-    runtimeOnly("org.bytedeco:opencv:$opencvVersion-$javacppVersion:macosx-arm64")
+    runtimeOnly("org.bytedeco:opencv:$opencvVersion-$javacppVersion:$currentNativeClassifier")
 
     // ── HTML parsing ──────────────────────────────────────────────────────────
     implementation("org.jsoup:jsoup:$jsoupVersion")
@@ -110,7 +133,7 @@ tasks.shadowJar {
     // Belt-and-suspenders: drop any non-arm64 natives that sneak in transitively
     exclude("org/bytedeco/*/linux*/**")
     exclude("org/bytedeco/*/windows*/**")
-    exclude("org/bytedeco/*/macosx-x86_64/**")
+    exclude("org/bytedeco/*/$filteredNativeClassifier/**")
 }
 
 tasks.withType<JavaCompile> {
