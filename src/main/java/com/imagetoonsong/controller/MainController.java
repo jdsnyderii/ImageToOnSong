@@ -6,6 +6,7 @@ import com.imagetoonsong.core.OcrProcessor;
 import com.imagetoonsong.events.AppEventBus;
 import com.imagetoonsong.events.PasteImageEvent;
 import javafx.application.Platform;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -133,49 +134,49 @@ public class MainController {
         progressIndicator.setVisible(true);
         statusLabel.setText("Starting OCR...");
         convertButton.setDisable(true);
-
         executor.submit(() -> {
-            try {
-                System.out.println("=== OCR START ===");
+            System.out.println("=== OCR START ===");
 
-                long startTime = System.currentTimeMillis();
 
-                OcrProcessor ocr = new OcrProcessor();
-                System.out.println("OcrProcessor created");
-                String rawText = ocr.extractText(imageSource);
-                System.out.println("OCR finished - raw text length: " + rawText.length());
+            OcrProcessor ocrProcessor = new OcrProcessor();
+            OnSongBuilder builder = new OnSongBuilder();
+            final String existingText = resultTextArea.getText();
+            boolean emptyTextBox = existingText.isEmpty();
+            long startTime = System.currentTimeMillis();
 
+            Task<String> ocrTask = new Task<>() {
+                @Override
+                protected String call() throws Exception {
+                    String rawText = ocrProcessor.extractText(imageSource);
+                    System.out.println("OCR finished - raw text length: " + rawText.length());
+                    return builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
+                }
+            };
+
+            ocrTask.setOnSucceeded(e -> {
                 long duration = System.currentTimeMillis() - startTime;
-
-                OnSongBuilder builder = new OnSongBuilder();
-                boolean emptyTextBox = resultTextArea.getText().isEmpty();
-                String result = builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
-
-                System.out.println("OnSong build complete");
-
-                Platform.runLater(() -> {
-                    currentOnSongText = result;
-                    String resultText = result.isEmpty() ? "No text detected." : result;
-                    resultTextArea.appendText(resultText);
-                    statusLabel.setText("✅ Done in " + (duration / 1000) + " seconds");
-                    progressIndicator.setVisible(false);
-                    convertButton.setDisable(false);
-                    copyButton.setDisable(false);
-                    downloadButton.setDisable(false);
-                });
-
+                String result = ocrTask.getValue();
+                String resultText = result.isEmpty() ? "No text detected." : result;
+                currentOnSongText = existingText + resultText;
+                resultTextArea.setText(currentOnSongText);
+                statusLabel.setText("✅ Done in " + (duration / 1000) + " seconds");
+                progressIndicator.setVisible(false);
+                convertButton.setDisable(false);
+                copyButton.setDisable(false);
+                downloadButton.setDisable(false);
                 System.out.println("=== OCR SUCCESS in " + duration + " ms ===");
-            } catch (Exception e) {
-                System.err.println("=== OCR FAILED ===");
-                e.printStackTrace();
-                Platform.runLater(() -> {
-                    showError("OCR Failed", e.getMessage());
-                    progressIndicator.setVisible(false);
-                    convertButton.setDisable(false);
-                    statusLabel.setText("Failed - check console");
-                });
-            }
+            });
+            ocrTask.setOnFailed(e -> {
+                Throwable ex = ocrTask.getException();
+                statusLabel.setText("❌ Failed: " + ex.getMessage());
+                showError("OCR Failed", ex.getMessage());
+                System.err.println("OCR task failed: " + ex.getMessage());
+                progressIndicator.setVisible(false);
+                convertButton.setDisable(false);
+            });
+            new Thread(ocrTask).start();
         });
+
     }
 
     private void copyToClipboard() {

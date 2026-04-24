@@ -40,7 +40,7 @@ public class OcrProcessor {
             "0123456789#/()[]., '-{}|";
     public static final String ENG = "eng";
 
-    public OcrProcessor() throws Exception {}
+    public OcrProcessor() {}
 
     // ── Angle threshold for '|' vs '/' classification ───────────────────────
     private static final double ANGLE_THRESHOLD_DEGREES = 83.0;
