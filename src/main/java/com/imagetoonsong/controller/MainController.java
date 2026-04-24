@@ -37,7 +37,6 @@ public class MainController {
     @FXML public Button clearTextButton;
     @FXML private ComboBox<String> styleCombo;
 
-    private String currentOnSongText = "";
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private ImageSource imageSource;
 
@@ -157,7 +156,7 @@ public class MainController {
                 long duration = System.currentTimeMillis() - startTime;
                 String result = ocrTask.getValue();
                 String resultText = result.isEmpty() ? "No text detected." : result;
-                currentOnSongText = existingText + resultText;
+                String currentOnSongText = existingText + resultText;
                 resultTextArea.setText(currentOnSongText);
                 statusLabel.setText("✅ Done in " + (duration / 1000) + " seconds");
                 progressIndicator.setVisible(false);
@@ -180,6 +179,7 @@ public class MainController {
     }
 
     private void copyToClipboard() {
+        String currentOnSongText = resultTextArea.getText();
         if (currentOnSongText.isEmpty()) return;
         Clipboard clipboard = Clipboard.getSystemClipboard();
         ClipboardContent content = new ClipboardContent();
@@ -193,6 +193,7 @@ public class MainController {
     }
 
     private void downloadFile() {
+        String currentOnSongText = resultTextArea.getText();
         if (currentOnSongText.isEmpty()) return;
 
         FileChooser fileChooser = new FileChooser();

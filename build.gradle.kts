@@ -189,7 +189,7 @@ runtime {
         installerType   = "dmg"
         appVersion      = project.version.toString()
 
-        mainJar = "ImageToOnSong-1.0.0-all.jar"
+        mainJar = "ImageToOnSong-$appVersion-all.jar"
         mainClass = "com.imagetoonsong.Main" // Ensure this matches your actual package path
 
         jvmArgs = listOf(
