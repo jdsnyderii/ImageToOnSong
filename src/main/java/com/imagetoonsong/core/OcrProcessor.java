@@ -552,8 +552,12 @@ public class OcrProcessor {
     }
 
     private static boolean endsInChordCharacter(StringBuilder buf) {
-        return buf.substring(buf.length() - 1).matches("[A-G]");
+        if (buf == null || buf.isEmpty()) return false;
+        // Check if the last character is part of a chord name (root, accidental, or extension)
+        char last = buf.charAt(buf.length() - 1);
+        return String.valueOf(last).matches("[A-G#b0-9majisudg]");
     }
+
     /**
      * Parses "bbox x_left y_top x_right y_bottom" from a Tesseract hOCR title string.
      * Returns int[4] = { xLeft, yTop, xRight, yBottom } or null on failure.
