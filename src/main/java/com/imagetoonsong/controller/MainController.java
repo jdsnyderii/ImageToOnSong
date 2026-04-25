@@ -4,7 +4,9 @@ import com.imagetoonsong.core.ImageSource;
 import com.imagetoonsong.core.OnSongBuilder;
 import com.imagetoonsong.core.OcrProcessor;
 import com.imagetoonsong.events.AppEventBus;
+import com.imagetoonsong.events.DropImageEvent;
 import com.imagetoonsong.events.PasteImageEvent;
+import com.imagetoonsong.events.ShutdownRequestEvent;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
@@ -74,6 +76,9 @@ public class MainController {
             if (event instanceof PasteImageEvent(ImageSource src)) {
                 handleChordImage(src);
             }
+            if (event instanceof DropImageEvent(ImageSource src)) {
+                handleChordImage(src);
+            }
         });
 
     }
@@ -81,8 +86,10 @@ public class MainController {
 
     @FXML
     private void handleExit() {
-        Platform.exit();
-        System.exit(0);
+        shutdown();
+        AppEventBus.getInstance().post(new ShutdownRequestEvent());
+//        Platform.exit();
+//        System.exit(0);
     }
 
     @FXML
@@ -173,7 +180,9 @@ public class MainController {
                 progressIndicator.setVisible(false);
                 convertButton.setDisable(false);
             });
-            new Thread(ocrTask).start();
+            Thread ocrThread = new Thread(ocrTask);
+            ocrThread.setDaemon(true);
+            ocrThread.start();
         });
 
     }

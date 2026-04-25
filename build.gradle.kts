@@ -1,3 +1,4 @@
+import org.gradle.internal.impldep.com.sun.jna.StringArray
 import org.gradle.internal.os.OperatingSystem
 
 val buildArch: String = layout.buildDirectory.get().asFile.parentFile.name // e.g., 'chordcharter'
@@ -109,6 +110,7 @@ dependencies {
 application {
     applicationName = "ImageToOnSong"
     mainClass = "com.imagetoonsong.Main"
+    applicationDefaultJvmArgs = listOf("-Xdock:name=ImageToOnSong")
 }
 
 

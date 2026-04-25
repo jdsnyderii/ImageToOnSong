@@ -17,4 +17,9 @@ public class AppEventBus {
     public void post(Object event) {
         subscribers.forEach(s -> s.accept(event));
     }
+
+    public void shutdown() {
+        subscribers.clear();
+    }
+
 }
