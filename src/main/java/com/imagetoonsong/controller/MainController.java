@@ -15,15 +15,20 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.*;
 import javafx.stage.FileChooser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.nio.file.Files;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainController {
 
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
     @FXML public MenuItem aboutMenuItem;
     @FXML public MenuItem openFileMenuItem;
     @FXML public MenuItem exitMenuItem;
@@ -38,6 +43,7 @@ public class MainController {
     @FXML private Button downloadButton;
     @FXML public Button clearTextButton;
     @FXML private ComboBox<String> styleCombo;
+
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private ImageSource imageSource;
@@ -141,7 +147,7 @@ public class MainController {
         statusLabel.setText("Starting OCR...");
         convertButton.setDisable(true);
         executor.submit(() -> {
-            System.out.println("=== OCR START ===");
+            logger.info("=== OCR START ===");
 
 
             OcrProcessor ocrProcessor = new OcrProcessor();
@@ -154,7 +160,7 @@ public class MainController {
                 @Override
                 protected String call() throws Exception {
                     String rawText = ocrProcessor.extractText(imageSource);
-                    System.out.println("OCR finished - raw text length: " + rawText.length());
+                    logger.info("OCR finished - raw text length: {}", rawText.length());
                     return builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
                 }
             };
@@ -170,7 +176,7 @@ public class MainController {
                 convertButton.setDisable(false);
                 copyButton.setDisable(false);
                 downloadButton.setDisable(false);
-                System.out.println("=== OCR SUCCESS in " + duration + " ms ===");
+                logger.info("=== OCR SUCCESS in {} ms ===", duration);
             });
             ocrTask.setOnFailed(e -> {
                 Throwable ex = ocrTask.getException();
@@ -181,6 +187,7 @@ public class MainController {
                 convertButton.setDisable(false);
             });
             Thread ocrThread = new Thread(ocrTask);
+            ocrThread.setName("ocr-worker-" + imageSource.source());
             ocrThread.setDaemon(true);
             ocrThread.start();
         });

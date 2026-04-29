@@ -16,3 +16,14 @@ plugins {
 }
 
 rootProject.name = "ImageToOnSong"
+
+buildCache {
+    local {
+        // In Kotlin, we use 'isEnabled' or assignment
+        isEnabled = true
+
+        // Use property assignment for the directory
+        directory = File(rootDir, "build/build-cache")
+
+    }
+}

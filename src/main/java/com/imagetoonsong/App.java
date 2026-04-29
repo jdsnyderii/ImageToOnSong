@@ -15,9 +15,12 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.*;
 import javafx.stage.Stage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.net.URL;
 import java.util.Objects;
 
@@ -30,6 +33,8 @@ import java.util.Objects;
  */
 public class App extends Application {
 
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
     TessData tessData;
 
     @Override
@@ -115,7 +120,7 @@ public class App extends Application {
     }
     @Override
     public void stop() throws Exception {
-        System.out.println("App.stop() was called");
+        logger.info("App.stop() was called");
         AppEventBus.getInstance().shutdown();
         if (tessData != null) {
             tessData.close();

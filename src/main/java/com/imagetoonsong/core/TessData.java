@@ -3,6 +3,7 @@ package com.imagetoonsong.core;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.lang.invoke.MethodHandles;
 import java.lang.ref.Cleaner;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,9 +13,12 @@ import java.util.Comparator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class TessData implements AutoCloseable{
-
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Set<Cleaner.Cleanable> TO_CLEAN = ConcurrentHashMap.newKeySet();
     public static String tessDirPath;
@@ -23,7 +27,7 @@ public class TessData implements AutoCloseable{
     static {
         // Register the shutdown hook once
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("Shutdown hook: Cleaning remaining resources...");
+            logger.info("Shutdown hook: Cleaning remaining resources...");
             TO_CLEAN.forEach(Cleaner.Cleanable::clean);
         }));
     }
@@ -45,11 +49,11 @@ public class TessData implements AutoCloseable{
         @Override
         public void run() {
             // This is the actual "Destructor" logic
-            System.out.println("Cleaning up native resource at address: " + pointer);
+            logger.info("Cleaning up native resource at address: {}", pointer);
             try (Stream<Path> stream = Files.walk(pointer)) {
                 stream.sorted(Comparator.reverseOrder()).forEach(TessData::deletePath);
             } catch (IOException e) {
-                System.out.println(e.getMessage());
+                logger.error(e.getMessage());
             }
         }
     }
@@ -85,7 +89,7 @@ public class TessData implements AutoCloseable{
     }
 
     private static void deletePath(Path path) {
-        System.out.println("Deleting " + path.toString());
+        logger.info("Deleting {} ", path.toString());
         try { Files.deleteIfExists(path); }
         catch (IOException e) { throw new UncheckedIOException(e); }
     }

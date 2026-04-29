@@ -5,10 +5,13 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.*;
 import javafx.scene.image.Image;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -35,6 +38,8 @@ import static com.imagetoonsong.core.ImageMetadata.estimateDpiFromDimensions;
  */
 public record ImageSource(Image image, int dpi, String source) {
 
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
     // ── Factory methods ──────────────────────────────────────────────────────
 
     /**
@@ -68,7 +73,7 @@ public record ImageSource(Image image, int dpi, String source) {
     public static ImageSource fromClipboard(Image fxImage) {
         Image normalized = flattenToCanvas(fxImage);
         int dpi = estimateDpiFromDimensions((int) normalized.getWidth());
-        System.out.printf("[Clipboard] original=%dx%d  normalized=%dx%d  dpi=%d%n",
+        logger.info("[Clipboard] original={}x{}  normalized={}x{}  dpi={}",
                 (int) fxImage.getWidth(),   (int) fxImage.getHeight(),
                 (int) normalized.getWidth(), (int) normalized.getHeight(), dpi);
         return new ImageSource(normalized, dpi, "clipboard");

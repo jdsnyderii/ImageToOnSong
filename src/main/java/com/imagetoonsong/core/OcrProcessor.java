@@ -18,6 +18,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.opencv.core.CvType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
 import javax.imageio.stream.ImageInputStream;
@@ -25,6 +27,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.invoke.MethodHandles;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -36,6 +39,8 @@ import static org.bytedeco.opencv.global.opencv_imgproc.*;
 
 public class OcrProcessor {
 
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
     public static final String PAGE_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" +
             "0123456789#/()[]., '-{}|";
     public static final String ENG = "eng";
@@ -112,7 +117,7 @@ public class OcrProcessor {
      *  4. Pass hOCR + strumming overrides to HocrTolerantParser.
      */
     public String extractText(ImageSource imageSource) throws Exception, UncheckedIOException {
-        System.out.println("=== Starting Bytedeco Tesseract OCR ===");
+        logger.info("=== Starting Bytedeco Tesseract OCR ===");
         int tesseractDpi = Math.round(imageSource.dpi());
 
         TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, ENG);
@@ -137,7 +142,7 @@ public class OcrProcessor {
         // ── First pass ───────────────────────────────────────────────────────
         BytePointer outText = api.GetHOCRText(0);
         String html = outText.getString();
-        System.out.println(html);
+        logger.info(html);
         outText.deallocate();
 
         // ── Re-OCR pass for strumming lines ──────────────────────────────────
@@ -151,7 +156,7 @@ public class OcrProcessor {
 
         // ── Parse ────────────────────────────────────────────────────────────
         String result = HocrTolerantParser.parseHocrToString(doc, strummingOverrides);
-        System.out.println("OCR completed successfully - " + result.length() + " characters returned");
+        logger.info("OCR completed successfully - {} characters returned", result.length());
 
         return result;
     }
@@ -168,7 +173,7 @@ public class OcrProcessor {
                 image.channels(), (int) image.step());
         api.SetVariable("user_defined_dpi", String.valueOf(tesseractDpi));
         api.SetSourceResolution(tesseractDpi);
-        System.out.printf("Using scaled DPI: %d%n", tesseractDpi);
+        logger.info("Using scaled DPI: {}", tesseractDpi);
     }
 
     protected TessBaseAPI createTessAPI(int pageSegMode, String language) {
@@ -178,7 +183,7 @@ public class OcrProcessor {
             api.close();
             throw new RuntimeException("Could not initialize Tesseract with tessdata at: " + tessDirPath);
         }
-        System.out.printf("Tesseract initialized with tessdata %s\n", tessDirPath);
+        logger.info("Tesseract initialized with tessdata {}", tessDirPath);
 
         api.SetPageSegMode(pageSegMode);
         api.SetVariable("preserve_interword_spaces", "1");
@@ -279,12 +284,11 @@ public class OcrProcessor {
             crop.release();
 
             if (clean.isEmpty()) {
-                System.out.printf("[Re-OCR] yTop=%d  raw='%s'  →  (empty, skipping)%n",
-                        lineBbox[1], lineText);
+                logger.info("[Re-OCR] yTop={}  raw='{}'  →  (empty, skipping)", lineBbox[1], lineText);
                 continue;
             }
 
-            System.out.printf("[Re-OCR] yTop=%d  raw='%s'  →  clean='%s'%n",
+            logger.info("[Re-OCR] yTop={}  raw='{}'  →  clean='{}",
                     lineBbox[1], lineText, clean);
 
             // ── Register override against ALL child word yTops ────────────────
@@ -313,9 +317,9 @@ public class OcrProcessor {
         // Debug: save the crop so it can be inspected
         String outputPath = String.format("cropped_result_%s.png", lineBbox);
         if (imwrite("build/" + outputPath, crop)) {
-            System.out.println("Saved crop: " + outputPath);
+            logger.info("Saved crop: {}", outputPath);
         } else {
-            System.err.println("Could not save crop: " + outputPath);
+            logger.error("Could not save crop: {}", outputPath);
         }
     }
 
@@ -369,7 +373,7 @@ public class OcrProcessor {
 //        GaussianBlur(crop, crop, new Size(1, 3), 0);
 
         MatchedCharacterResults results = runIndividualCharacterOcr(crop, dpi);
-        System.out.println("Caracter OCR: " + results.ocrChars);
+        logger.info("Caracter OCR: {}", results.ocrChars);
 
         ChordDetector detector = new ChordDetector();
         String bracketedChords = detector.convertToBracketed(results.ocrChars);
@@ -408,7 +412,7 @@ public class OcrProcessor {
             String result = ptr.getString().stripTrailing();
             ptr.deallocate();
 
-            System.out.printf("  [PSM_WORD fallback] → '%s'%n", result);
+            logger.info("  [PSM_WORD fallback] → '{}'", result);
             return result;
         } finally {
             fallback.End();
@@ -496,8 +500,7 @@ public class OcrProcessor {
                     // Narrow vertical stroke → bar line, no OCR needed
                     result.append("[|]");
                     recognizedCount++;
-                    System.out.printf("  [geometry] x=%d w=%d h=%d ratio=%.2f → |%n",
-                            rect.x(), rect.width(), rect.height(), aspectRatio);
+                    logger.info("  [geometry] x={} w={} h={} ratio={} → |", rect.x(), rect.width(), rect.height(), aspectRatio);
                     continue;
                 }
 
@@ -534,7 +537,7 @@ public class OcrProcessor {
                             // Tesseract returned nothing — emit warning marker so
                             // the caller knows the output is incomplete.
                             result.append("[⚠️]");
-                            System.out.printf("  [⚠️] x=%d w=%d h=%d ratio=%.2f — Tesseract returned empty%n",
+                            logger.info("  [⚠️] x={} w={} h={} ratio={} — Tesseract returned empty%n",
                                     rect.x(), rect.width(), rect.height(), aspectRatio);
                         }
                     }

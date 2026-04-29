@@ -1,15 +1,20 @@
 package com.imagetoonsong.core;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.lang.invoke.MethodHandles;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 
 public class OnSongBuilder {
-
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
     private final ChordDetector chordDetector = new ChordDetector();
 
     public String buildOnSong(String rawOcrText, String title, String artist, boolean emptyTextBox) {
-        System.out.printf("rawOCRText: %s\n", rawOcrText);
+        logger.info("rawOCRText: {}}", rawOcrText);
 
         StringBuilder sb = new StringBuilder();
 
@@ -29,7 +34,7 @@ public class OnSongBuilder {
             lineNumber++;
             if (line.isEmpty()) {
                 sb.append("\n");
-                System.out.printf("%d : Found empty\n", lineNumber);
+                logger.info("{} : Found empty", lineNumber);
 
                 continue;
             }
@@ -37,12 +42,12 @@ public class OnSongBuilder {
             // Detect possible section headers (Verse 1, Chorus, Bridge, etc.)
             if (SectionDetector.detectSectionCaseInsensitive(line)) {
                 sb.append("\n");
-                System.out.printf("%d : Found section %s\n", lineNumber, line);
+                logger.info("{} : Found section {}", lineNumber, line);
                 sb.append(normalizeSection(line)).append("\n");
                 continue;
             }
             if (line.length() == 1) {
-                System.out.printf("%d : Found singleton %s\n", lineNumber, line);
+                logger.info("{} : Found singleton {}}", lineNumber, line);
             }
             sb.append(line).append("\n");
         }
@@ -77,20 +82,29 @@ public class OnSongBuilder {
 
         String stripped = raw.strip();
 
-        // Stop at first letter OR digit (not just letter)
         int start = 0;
         int end = stripped.length() - 1;
-        if (stripped.charAt(0) == '[' || stripped.charAt(0) == '(') start++;
-        if (stripped.charAt(stripped.length() - 1) == ']') end--;
+
+        // Only strip square brackets — never parentheses.
+        // "(x4)" at the end is valid repeat annotation content, not a wrapper.
+        if (stripped.charAt(0) == '[') start++;
+        if (stripped.charAt(end) == ']') end--;
 
         if (start > end) return raw;
 
         String content = stripped.substring(start, end + 1);
+
+        // Strip any residual bracket characters from OCR misreads.
+        // e.g. "Tag]" → "Tag"
+        // Only strip square brackets — parentheses inside content are intentional.
+        content = content.replace("[", "").replace("]", "");
+
         content = fixOcrDigitsInWords(content);
         content = toTitleCase(content);
 
         return content + ":";
     }
+
     /**
      * Replaces digits that are visually similar to letters when they appear
      * inside an otherwise alphabetic word — e.g. "Ch0rus" → "Chorus".

@@ -63,13 +63,17 @@ dependencies {
     val opencvVersion = "4.13.0"
     val leptonicaVersion = "1.87.0"
     val jsoupVersion = "1.17.2"
+    val junitVersion = "5.11.4"
+    val metadataVersion = "2.19.0"
+    val logbackVersion = "1.5.32"
+    val julslf4jVersion = "2.0.17"
 
     // ── JavaFX ────────────────────────────────────────────────────────────────
     implementation("org.openjfx:javafx-controls:$javafxVersion")
     implementation("org.openjfx:javafx-fxml:$javafxVersion")
 
     // The core library for reading Exif, IPTC, XMP, etc.
-    implementation("com.drewnoakes:metadata-extractor:2.19.0")
+    implementation("com.drewnoakes:metadata-extractor:$metadataVersion")
 
     // ── JavaCPP runtime ───────────────────────────────────────────────────────
     implementation("org.bytedeco:javacpp:$javacppVersion")
@@ -103,8 +107,25 @@ dependencies {
     implementation("org.bytedeco:opencv:$opencvVersion-$javacppVersion")
     runtimeOnly("org.bytedeco:opencv:$opencvVersion-$javacppVersion:$currentNativeClassifier")
 
+    // Logback pulls in slf4j-api transitively — one dependency does it all
+    implementation("ch.qos.logback:logback-classic:$logbackVersion")
+    implementation("org.slf4j:jul-to-slf4j:$julslf4jVersion")
+
     // ── HTML parsing ──────────────────────────────────────────────────────────
     implementation("org.jsoup:jsoup:$jsoupVersion")
+    // JUnit 5 — aggregator pulls in api, params, and engine
+    testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
+
+    // Required by Gradle to run JUnit Platform tests
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()  // required — not enabled by default
+    jvmArgs(
+        "--enable-native-access=javafx.graphics",
+        "--enable-native-access=ALL-UNNAMED"
+    )
 }
 
 application {
@@ -148,6 +169,8 @@ tasks.withType<JavaExec> {
         "--enable-native-access=ALL-UNNAMED"
     )
 }
+
+
 
 // ── Runtime image + DMG installer (Phase 1: macOS arm64) ─────────────────────
 //

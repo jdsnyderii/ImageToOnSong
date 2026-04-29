@@ -46,7 +46,7 @@ public class ImageMetadata {
     }
 
     public static int estimateDpiFromDimensions(int width) {
-        if (width < 500) {
+        if (width < 250) {
             return DEFAULT_DPI;
         }
         return RETINA_DPI;
