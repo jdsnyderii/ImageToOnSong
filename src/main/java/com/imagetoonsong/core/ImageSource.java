@@ -4,10 +4,11 @@ import javafx.application.Platform;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.image.*;
 import javafx.scene.image.Image;
+import javafx.scene.image.PixelReader;
+import javafx.scene.image.WritableImage;
+import javafx.scene.image.WritablePixelFormat;
 import javafx.scene.transform.Transform;
-import javafx.stage.Screen;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -174,7 +175,6 @@ public record ImageSource(Image image, int dpi, String source) {
         int width = (int) fxImage.getWidth();
         int height = (int) fxImage.getHeight();
 
-        double scaleX = fxImage.getWidth() / fxImage.getRequestedWidth(); // If applicable
         BufferedImage bImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
         PixelReader reader = fxImage.getPixelReader();
 

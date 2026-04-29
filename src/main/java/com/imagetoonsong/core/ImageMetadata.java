@@ -42,7 +42,7 @@ public class ImageMetadata {
             // If it's a PNG with no DPI metadata, check the filename or
             // assume 144 if it's high-res (Retina).
             if (imageFile.getName().toLowerCase().endsWith(".png")) {
-                return estimateMacResolution(imageFile);
+                return estimateMacResolution();
             }
 
         } catch (Exception e) {
@@ -58,7 +58,7 @@ public class ImageMetadata {
         return RETINA_DPI;
     }
 
-    private static int estimateMacResolution(File file) {
+    private static int estimateMacResolution() {
         // High-level logic: If no metadata exists, we often check the
         // pixel dimensions via ImageIO. If width > 2500 on a small file,
         // it's likely a 144dpi Retina capture.
