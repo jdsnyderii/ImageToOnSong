@@ -4,12 +4,18 @@ import com.drew.imaging.ImageMetadataReader;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.exif.ExifIFD0Directory;
 import com.drew.metadata.png.PngDirectory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.lang.invoke.MethodHandles;
 
 public class ImageMetadata {
 
-    private static final int DEFAULT_DPI = 96;
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
+
+    private static final int DEFAULT_DPI = 140;
     private static final int RETINA_DPI = 144;
 
     public static int extractDpi(File imageFile) {
@@ -40,9 +46,9 @@ public class ImageMetadata {
             }
 
         } catch (Exception e) {
-            // Log error or fall through to default
+            logger.error("extractDPI failed {}", e.getMessage());
         }
-        return DEFAULT_DPI;
+        return RETINA_DPI;
     }
 
     public static int estimateDpiFromDimensions(int width) {

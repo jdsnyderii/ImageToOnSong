@@ -1,13 +1,17 @@
 package com.imagetoonsong.core;
 
 import javafx.application.Platform;
+import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.*;
 import javafx.scene.image.Image;
+import javafx.scene.transform.Transform;
+import javafx.stage.Screen;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -109,8 +113,30 @@ public record ImageSource(Image image, int dpi, String source) {
         try {
             return future.get(5, TimeUnit.SECONDS);
         } catch (Exception e) {
-            System.err.println("[Clipboard] Canvas flatten failed, using raw image: " + e.getMessage());
+            logger.error("[Clipboard] Canvas flatten failed, using raw image: {}", e.getMessage());
             return source; // fallback to raw
+        }
+    }
+
+    public void saveImage(File outputFile) {
+        saveImage(image, outputFile);
+    }
+
+    private static void saveImage(Image fxImage, File outputFile) {
+        BufferedImage bImage = toBufferedImage(fxImage);
+
+        try {
+            // ImageIO handles the low-level encoding and headers
+            boolean success = ImageIO.write(bImage, "png", outputFile);
+
+            if (success) {
+                logger.info("Successfully wrote image to: {}", outputFile.getAbsolutePath());
+            } else {
+                // This happens if the SPI can't find a writer for "png"
+                logger.error("Failed to find a writer for format: png");
+            }
+        } catch (IOException e) {
+            logger.error("I/O error while saving image", e);
         }
     }
 
@@ -119,13 +145,19 @@ public record ImageSource(Image image, int dpi, String source) {
         int h = (int) source.getHeight();
 
         Canvas canvas = new Canvas(w, h);
+
         GraphicsContext gc = canvas.getGraphicsContext2D();
+        // This is required because dual displays will cause anti-aliasing to be triggered otherwise -- which is bad
+        gc.setImageSmoothing(false);
         gc.setFill(javafx.scene.paint.Color.WHITE);
         gc.fillRect(0, 0, w, h);
         gc.drawImage(source, 0, 0, w, h);
 
         WritableImage result = new WritableImage(w, h);
-        canvas.snapshot(null, result);
+        SnapshotParameters params = new SnapshotParameters();
+        params.setTransform(Transform.scale(1.0, 1.0));
+        canvas.snapshot(params, result);
+        saveImage(result, new File("build/afterFlattened.png"));
         return result;
     }
 
@@ -135,11 +167,16 @@ public record ImageSource(Image image, int dpi, String source) {
      * Converts the JavaFX Image to a TYPE_INT_RGB BufferedImage.
      */
     public BufferedImage toBufferedImage() {
-        int width = (int) image.getWidth();
-        int height = (int) image.getHeight();
+        return toBufferedImage(image);
+    }
 
+    private static BufferedImage toBufferedImage(Image fxImage) {
+        int width = (int) fxImage.getWidth();
+        int height = (int) fxImage.getHeight();
+
+        double scaleX = fxImage.getWidth() / fxImage.getRequestedWidth(); // If applicable
         BufferedImage bImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        PixelReader reader = image.getPixelReader();
+        PixelReader reader = fxImage.getPixelReader();
 
         // Create an integer array to hold the pixel data
         int[] pixels = new int[width * height];

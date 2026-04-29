@@ -4,10 +4,15 @@ import org.bytedeco.javacv.Java2DFrameUtils;
 import org.bytedeco.opencv.global.opencv_imgproc;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.bytedeco.opencv.opencv_core.Size;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.awt.image.BufferedImage;
+import java.lang.invoke.MethodHandles;
 
 public class ImagePreprocessor {
+    private static final Logger logger = LoggerFactory.getLogger(
+            MethodHandles.lookup().lookupClass());
 
     public static BufferedImage preprocess(BufferedImage original) {
         try {
@@ -35,7 +40,7 @@ public class ImagePreprocessor {
             return Java2DFrameUtils.toBufferedImage(binary);
 
         } catch (Exception e) {
-            System.err.println("Preprocessing failed, returning original: " + e.getMessage());
+            logger.error("Preprocessing failed, returning original: {}", e.getMessage());
             return original; // Fallback
         }
     }

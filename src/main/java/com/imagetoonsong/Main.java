@@ -68,8 +68,8 @@ public class Main {
             logger.info("[ImageToOnSong] Native cache: {}", cacheDir);
         } catch (IOException e) {
             // Soft failure — JavaCPP will fall back to java.io.tmpdir automatically
-            System.err.println("[ImageToOnSong] Warning: could not create native cache at "
-                    + cacheDir + " — falling back to system temp. (" + e.getMessage() + ")");
+            logger.error("[ImageToOnSong] Warning: could not create native cache at {} "
+                   + " — falling back to system temp. ( {} )", cacheDir, e.getMessage());
         }
     }
 }

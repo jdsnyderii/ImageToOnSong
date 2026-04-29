@@ -208,7 +208,7 @@ tasks.withType<JavaExec> {
 runtime {
     options.set(listOf(
         "--strip-debug",
-        "--compress", "2",
+        "--compress", "zip-9",
         "--no-header-files",
         "--no-man-pages"
     ))

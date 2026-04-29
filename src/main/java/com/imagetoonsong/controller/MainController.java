@@ -127,6 +127,7 @@ public class MainController {
 
     private void handleChordImage(ImageSource src) {
         imageSource = src;
+        imageSource.saveImage(new File("build/clipboard.png"));
         Image image = imageSource.image();
         imageView.setImage(image);
         imageInfoLabel.setText(imageSource.source() + " (" + (int)image.getWidth() + "×" + (int)image.getHeight() + ")");
@@ -183,7 +184,7 @@ public class MainController {
                 Throwable ex = ocrTask.getException();
                 statusLabel.setText("❌ Failed: " + ex.getMessage());
                 showError("OCR Failed", ex.getMessage());
-                System.err.println("OCR task failed: " + ex.getMessage());
+                logger.error("OCR task failed: {}", ex.getMessage());
                 progressIndicator.setVisible(false);
                 convertButton.setDisable(false);
             });
