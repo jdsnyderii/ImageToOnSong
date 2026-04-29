@@ -158,6 +158,31 @@ tasks.shadowJar {
     exclude("org/bytedeco/*/$filteredNativeClassifier/**")
 }
 
+tasks.register<Exec>("signApp") {
+    description = "Self Sign the Application"
+    group = "distribution"
+
+    // Set the working directory (optional)
+    workingDir = layout.buildDirectory.get().asFile
+
+    // Define the command and arguments
+    val appPath = layout.buildDirectory.dir("jpackage/ImageToOnSong.app").get().asFile.absolutePath
+
+    commandLine("codesign", "--force", "--deep", "--sign", "-", appPath)
+
+    // Ensure it only runs after jpackage is done
+    mustRunAfter("jpackage")
+}
+
+// 4. Trigger it automatically after packaging
+tasks.named("jpackage") {
+    finalizedBy("signApp")
+}
+// Ensure it runs after the package task
+tasks.named("jpackage") {
+    finalizedBy("signApp")
+}
+
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
 }

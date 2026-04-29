@@ -10,6 +10,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -49,12 +51,12 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 
 
-@Execution(ExecutionMode.CONCURRENT)
 class OcrPipelineTest {
 
     private static final Path RESOURCES = Paths.get("src", "test", "resources");
     private static final Path IMAGES_DIR = RESOURCES.resolve("images");
     private static final Path EXPECTED_DIR = RESOURCES.resolve("expected-outputs");
+    private static final Logger log = LoggerFactory.getLogger(OcrPipelineTest.class);
     private static TessData tessData;  // ← holds reference so it isn't GC'd
 
 
@@ -87,21 +89,23 @@ class OcrPipelineTest {
      * Each argument is a Path to the image file. JUnit names each test case
      * from the file name so failures clearly identify which image broke.
      */
+    @SuppressWarnings("resource")
     static Stream<Path> imageFiles() throws IOException {
+        log.info("Getting image files");
         if (!Files.exists(IMAGES_DIR)) {
             // Return empty stream — no test cases yet, don't fail the build
             return Stream.empty();
         }
 
-        try (Stream<Path> sorted = Files.walk(IMAGES_DIR).onClose(() -> {})) {
-            return sorted.filter(Files::isRegularFile)
-                    .filter(p -> {
-                        String name = p.getFileName().toString().toLowerCase();
-                        return name.endsWith(".png")
-                                || name.endsWith(".jpg")
-                                || name.endsWith(".jpeg");
-                    });
-        }
+        return Files.walk(IMAGES_DIR).onClose( () -> {})
+                .filter(Files::isRegularFile)
+                .filter(p -> {
+                    String name = p.getFileName().toString().toLowerCase();
+                    return name.endsWith(".png")
+                            || name.endsWith(".jpg")
+                            || name.endsWith(".jpeg");
+                })
+                .sorted(); // deterministic ordering
     }
 
     // ── Parameterized test ───────────────────────────────────────────────────
@@ -118,6 +122,7 @@ class OcrPipelineTest {
      * If your test images require different metadata, add a companion
      * .properties file alongside the image and read from it here.
      */
+    @Execution(ExecutionMode.CONCURRENT)
     @ParameterizedTest(name = "{0}")
     @MethodSource("imageFiles")
     void pipelineProducesExpectedOnSongOutput(Path imagePath) throws Exception {
