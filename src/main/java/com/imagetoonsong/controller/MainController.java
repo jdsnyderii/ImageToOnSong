@@ -1,13 +1,12 @@
 package com.imagetoonsong.controller;
 
 import com.imagetoonsong.core.ImageSource;
-import com.imagetoonsong.core.OnSongBuilder;
 import com.imagetoonsong.core.OcrProcessor;
+import com.imagetoonsong.core.OnSongBuilder;
 import com.imagetoonsong.events.AppEventBus;
 import com.imagetoonsong.events.DropImageEvent;
 import com.imagetoonsong.events.PasteImageEvent;
 import com.imagetoonsong.events.ShutdownRequestEvent;
-import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
@@ -51,11 +50,11 @@ public class MainController {
     @FXML
     public void initialize() {
         // Button actions
-        uploadButton.setOnAction(e -> openImage());
-        convertButton.setOnAction(e -> convertImage());
-        copyButton.setOnAction(e -> copyToClipboard());
-        downloadButton.setOnAction(e -> downloadFile());
-        clearTextButton.setOnAction(e -> clearText());
+        uploadButton.setOnAction(_ -> openImage());
+        convertButton.setOnAction(_ -> convertImage());
+        copyButton.setOnAction(_ -> copyToClipboard());
+        downloadButton.setOnAction(_ -> downloadFile());
+        clearTextButton.setOnAction(_ -> clearText());
 
         // Drag & Drop support
         imageView.setOnDragOver(this::handleDragOver);
@@ -65,7 +64,7 @@ public class MainController {
         imageView.setFocusTraversable(true);
 
         // 2. Give it focus when clicked (so it can hear the keyboard)
-        imageView.setOnMouseClicked(e -> imageView.requestFocus());
+        imageView.setOnMouseClicked(_ -> imageView.requestFocus());
 
         // Disable buttons initially
         convertButton.setDisable(true);
@@ -103,9 +102,11 @@ public class MainController {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle("About ImageToonSong");
         alert.setHeaderText("Image to OnSong Converter v1.0");
-        alert.setContentText("A utility for musicians to convert OCR chord sheet images " +
-                "into OnSong-compatible bracketed text format.\n\n" +
-                "Built with JavaFX.");
+        alert.setContentText("""
+                A utility for musicians to convert OCR chord sheet images \
+                into OnSong-compatible bracketed text format.
+                
+                Built with JavaFX.""");
 
         alert.showAndWait();
     }
@@ -165,7 +166,7 @@ public class MainController {
                 }
             };
 
-            ocrTask.setOnSucceeded(e -> {
+            ocrTask.setOnSucceeded(_ -> {
                 long duration = System.currentTimeMillis() - startTime;
                 String result = ocrTask.getValue();
                 String resultText = result.isEmpty() ? "No text detected." : result;
@@ -178,7 +179,7 @@ public class MainController {
                 downloadButton.setDisable(false);
                 logger.info("=== OCR SUCCESS in {} ms ===", duration);
             });
-            ocrTask.setOnFailed(e -> {
+            ocrTask.setOnFailed(_ -> {
                 Throwable ex = ocrTask.getException();
                 statusLabel.setText("❌ Failed: " + ex.getMessage());
                 showError("OCR Failed", ex.getMessage());
@@ -239,7 +240,7 @@ public class MainController {
         Dragboard db = event.getDragboard();
         boolean success = false;
         if (db.hasFiles()) {
-            File file = db.getFiles().get(0);
+            File file = db.getFiles().getFirst();
             if (file.getName().toLowerCase().matches(".*\\.(png|jpg|jpeg|bmp)$")) {
                 loadImage(file);
                 success = true;

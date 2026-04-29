@@ -12,17 +12,14 @@ import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
 import javafx.scene.input.*;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.net.URL;
-import java.util.Objects;
 
 /**
  * JavaFX application class.
@@ -51,15 +48,16 @@ public class App extends Application {
     private void primaryStageSetup(Stage primaryStage, Scene scene) {
         primaryStage.setScene(scene);
         primaryStage.setTitle("ImageToOnSong");
-        primaryStage.setOnCloseRequest(event -> {
-            prepareShutdown();
-        });
+        primaryStage.setOnCloseRequest(_ -> prepareShutdown());
 
         try {
             URL iconStream = getClass().getResource("/ImageToOnSong-Master.png");
-            primaryStage.getIcons().add(new Image(iconStream.toString()));
+            String iconPath = "";
+            if (iconStream != null) {
+                primaryStage.getIcons().add(new Image(iconPath));
+            }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error(e.getMessage());
         }
     }
 
@@ -88,8 +86,7 @@ public class App extends Application {
                 AppEventBus.getInstance().post(new DropImageEvent(imageSource));
                 success = true;
             } else if (db.hasFiles()) {
-                // Option B: Image file dropped from Finder/Explorer
-                File file = db.getFiles().get(0);
+                File file = db.getFiles().getFirst();
                 Image image = new Image(file.toURI().toString());
                 ImageSource imageSource = new ImageSource(image, ImageMetadata.estimateDpiFromDimensions((int)image.getWidth()), "DropEvent") ;
                 AppEventBus.getInstance().post(new DropImageEvent(imageSource));

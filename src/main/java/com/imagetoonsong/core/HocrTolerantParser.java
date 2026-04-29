@@ -56,7 +56,7 @@ public class HocrTolerantParser {
 //        List<WordEntry> allWords = extractWords(doc);
 //        if (allWords.isEmpty()) return "";
 
-        List<LogicalLine> lines = clusterIntoLines(doc, Y_TOLERANCE);
+        List<LogicalLine> lines = clusterIntoLines(doc);
 
         lines.sort(Comparator.comparingInt(l -> l.yTop));
         for (LogicalLine line : lines) {
@@ -67,7 +67,7 @@ public class HocrTolerantParser {
     }
 
     // ── Step 2 : line clustering ────────────────────────────────────────────────
-    private static List<LogicalLine> clusterIntoLines(Document doc, int tolerance) {
+    private static List<LogicalLine> clusterIntoLines(Document doc) {
 
         // ── Pass 1: build one LogicalLine per ocr_line span ──────────────────
         // Using ocr_line as the anchor fixes the word-yTop-outside-line-bbox
@@ -117,8 +117,8 @@ public class HocrTolerantParser {
                 continue;
             }
 
-            LogicalLine last = merged.get(merged.size() - 1);
-            if (Math.abs(current.yTop - last.yTop) <= tolerance) {
+            LogicalLine last = merged.getLast();
+            if (Math.abs(current.yTop - last.yTop) <= Y_TOLERANCE) {
                 // Same visual line — absorb words into the existing LogicalLine
                 last.words.addAll(current.words);
                 // Keep yTop as the minimum (topmost) of the two
@@ -265,7 +265,7 @@ public class HocrTolerantParser {
      */
     private static LogicalLine mergeChordLines(List<LogicalLine> chordLines) {
         // Use the yTop of the first (topmost) chord line as the anchor
-        LogicalLine combined = new LogicalLine(chordLines.get(0).yTop);
+        LogicalLine combined = new LogicalLine(chordLines.getFirst().yTop);
         for (LogicalLine cl : chordLines) {
             combined.words.addAll(cl.words);
         }
@@ -314,7 +314,7 @@ public class HocrTolerantParser {
 
         // PATH A — single collapsed token
         if (line.words.size() == 1) {
-            return isSingleTokenStrumming(line.words.get(0).text);
+            return isSingleTokenStrumming(line.words.getFirst().text);
         }
 
         // PATH B — multi-token with recognisable slash/pipe tokens
@@ -389,7 +389,7 @@ public class HocrTolerantParser {
                 int gap = token.xLeft - prev.xRight;
                 if (gap > slashWidth * 1.2 && slashWidth > 0) {
                     int dropped = Math.min((int) Math.round((double) gap / slashWidth), 8);
-                    for (int j = 0; j < dropped; j++) sb.append("/ ");
+                    sb.repeat("/ ", Math.max(0, dropped));
                 }
             }
 
@@ -400,7 +400,7 @@ public class HocrTolerantParser {
             } else if (token.text.matches("[|lLiI1]{1,2}")) {
                 sb.append("| ");
             } else if (token.text.matches("[/\\\\]+")) {
-                for (int j = 0; j < token.text.length(); j++) sb.append("/ ");
+                sb.repeat("/ ", token.text.length());
             } else {
                 sb.append(token.text).append(' ');
             }
@@ -460,7 +460,7 @@ public class HocrTolerantParser {
 
             if (!first) sb.append("| ");
             if (chord != null) sb.append('[').append(chord).append(']');
-            for (int i = 0; i < beats; i++) sb.append("/ ");
+            sb.repeat("/ ", Math.max(0, beats));
             first = false;
         }
 
@@ -601,7 +601,7 @@ public class HocrTolerantParser {
             char second = s.charAt(1);
             if (Character.isLowerCase(second)
                     && second == Character.toLowerCase(first)) {
-                s = String.valueOf(first) + s.substring(2);
+                s = first + s.substring(2);
             }
         }
         return s;

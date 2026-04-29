@@ -19,22 +19,22 @@ import static com.imagetoonsong.core.ImageMetadata.estimateDpiFromDimensions;
 
 /**
  * Canonical image container for the OCR pipeline.
- *
+ * <p>
  * Holds the JavaFX Image as the source of truth — no pixel conversion
  * occurs at construction time. Conversion to BufferedImage (and onward
  * to Mat) is deferred to toBufferedImage(), called once inside
  * OcrProcessor.extractText() just before the Mat is needed.
- *
+ * <p>
  * This eliminates the quality loss that occurred when BufferedImage was
  * produced eagerly at load time: any intermediate resampling, colour-space
  * conversion, or alpha compositing now happens exactly once, under
  * controlled conditions, at the last possible moment.
- *
+ * <p>
  * Metadata carried alongside the image:
- *  - dpi:    used by Tesseract's internal size calculations. File sources
- *            read this from EXIF/pHYs chunks; clipboard sources estimate
- *            it from screen density.
- *  - source: human-readable label for logging / debug output.
+ * - dpi:    used by Tesseract's internal size calculations. File sources
+ * read this from EXIF/pHYs chunks; clipboard sources estimate
+ * it from screen density.
+ * - source: human-readable label for logging / debug output.
  */
 public record ImageSource(Image image, int dpi, String source) {
 
@@ -44,7 +44,7 @@ public record ImageSource(Image image, int dpi, String source) {
 
     /**
      * Loads from a file on disk.
-     *
+     * <p>
      * Uses ImageIO to read metadata (DPI) and then creates a JavaFX Image
      * from the same file URI so the JavaFX image pipeline handles decoding.
      * This preserves colour profiles and avoids double-decoding artefacts.
@@ -65,7 +65,7 @@ public record ImageSource(Image image, int dpi, String source) {
 
     /**
      * Wraps a JavaFX Image from the clipboard (or any other in-memory source).
-     *
+     * <p>
      * DPI is estimated from the primary screen output scale because clipboard
      * images carry no file metadata. On a Retina display this gives 144–192;
      * on a standard display 96.
@@ -74,7 +74,7 @@ public record ImageSource(Image image, int dpi, String source) {
         Image normalized = flattenToCanvas(fxImage);
         int dpi = estimateDpiFromDimensions((int) normalized.getWidth());
         logger.info("[Clipboard] original={}x{}  normalized={}x{}  dpi={}",
-                (int) fxImage.getWidth(),   (int) fxImage.getHeight(),
+                (int) fxImage.getWidth(), (int) fxImage.getHeight(),
                 (int) normalized.getWidth(), (int) normalized.getHeight(), dpi);
         return new ImageSource(normalized, dpi, "clipboard");
     }
@@ -82,13 +82,13 @@ public record ImageSource(Image image, int dpi, String source) {
     /**
      * Flattens a JavaFX Image by rendering it onto a Canvas with a white
      * background and snapshotting the result into a WritableImage.
-     *
+     * <p>
      * This normalizes clipboard images to match the quality of disk screenshots:
-     *  - Composites any transparency against white
-     *  - Resolves colour space differences through JavaFX's render pipeline
-     *  - Produces a clean sRGB WritableImage identical in character to a
-     *    PNG snapshot saved by macOS
-     *
+     * - Composites any transparency against white
+     * - Resolves colour space differences through JavaFX's render pipeline
+     * - Produces a clean sRGB WritableImage identical in character to a
+     * PNG snapshot saved by macOS
+     * <p>
      * Must be called on the JavaFX Application Thread.
      */
     private static Image flattenToCanvas(Image source) {
@@ -128,10 +128,6 @@ public record ImageSource(Image image, int dpi, String source) {
         canvas.snapshot(null, result);
         return result;
     }
-    // ── Pixel dimensions (convenience, avoids casting at call sites) ─────────
-
-    public int width()  { return (int) image.getWidth();  }
-    public int height() { return (int) image.getHeight(); }
 
     // ── Deferred conversion ──────────────────────────────────────────────────
 
@@ -155,38 +151,5 @@ public record ImageSource(Image image, int dpi, String source) {
         bImage.setRGB(0, 0, width, height, pixels, 0, width);
 
         return bImage;
-    }
-
-    private static Image convertToARGB(Image clipboardImage) {
-        int w = (int) clipboardImage.getWidth();
-        int h = (int) clipboardImage.getHeight();
-        int[] buffer = new int[w * h];
-
-        // Read exactly what's on the clipboard (Standard ARGB)
-        clipboardImage.getPixelReader().getPixels(0, 0, w, h,
-                WritablePixelFormat.getIntArgbInstance(), buffer, 0, w);
-
-        for (int i = 0; i < buffer.length; i++) {
-            int argb = buffer[i];
-            int a = (argb >> 24) & 0xFF;
-            int r = (argb >> 16) & 0xFF;
-            int g = (argb >> 8) & 0xFF;
-            int b = argb & 0xFF;
-
-            // Flatten onto WHITE background
-            // This math effectively "blends" the text color with white
-            r = ((r * a) + (255 * (255 - a))) / 255;
-            g = ((g * a) + (255 * (255 - a))) / 255;
-            b = ((b * a) + (255 * (255 - a))) / 255;
-
-            // Re-pack as fully OPAQUE
-            buffer[i] = (0xFF << 24) | (r << 16) | (g << 8) | b;
-        }
-
-        WritableImage opaqueImage = new WritableImage(w, h);
-        opaqueImage.getPixelWriter().setPixels(0, 0, w, h,
-                WritablePixelFormat.getIntArgbInstance(), buffer, 0, w);
-
-        return opaqueImage;
     }
 }

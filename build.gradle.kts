@@ -1,4 +1,3 @@
-import org.gradle.internal.impldep.com.sun.jna.StringArray
 import org.gradle.internal.os.OperatingSystem
 
 val buildArch: String = layout.buildDirectory.get().asFile.parentFile.name // e.g., 'chordcharter'
@@ -56,7 +55,7 @@ repositories {
 }
 
 dependencies {
-    val javafxVersion = "21"
+    val javafxVersion = "25"
     val javacppVersion = "1.5.13"
     val javacvVersion = "1.5.13"
     val tesseractVersion = "5.5.2"

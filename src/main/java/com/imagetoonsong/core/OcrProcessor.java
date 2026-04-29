@@ -116,7 +116,7 @@ public class OcrProcessor {
      *     and re-run Tesseract with PSM_SINGLE_LINE + STRUMMING_WHITELIST.
      *  4. Pass hOCR + strumming overrides to HocrTolerantParser.
      */
-    public String extractText(ImageSource imageSource) throws Exception, UncheckedIOException {
+    public String extractText(ImageSource imageSource) throws Exception {
         logger.info("=== Starting Bytedeco Tesseract OCR ===");
         int tesseractDpi = Math.round(imageSource.dpi());
 
@@ -617,10 +617,10 @@ public class OcrProcessor {
         List<BarlineCharResult> results = new ArrayList<>();
 
         for (int i = 1; i < numLabels; i++) {
-            int bx = (int) statsIdx.get(i, CC_STAT_LEFT);
-            int by = (int) statsIdx.get(i, CC_STAT_TOP);
-            int bw = (int) statsIdx.get(i, CC_STAT_WIDTH);
-            int bh = (int) statsIdx.get(i, CC_STAT_HEIGHT);
+            int bx = statsIdx.get(i, CC_STAT_LEFT);
+            int by = statsIdx.get(i, CC_STAT_TOP);
+            int bw = statsIdx.get(i, CC_STAT_WIDTH);
+            int bh = statsIdx.get(i, CC_STAT_HEIGHT);
 
             if (bh < 10 || bw > bh * 0.8) continue;
 

@@ -11,7 +11,6 @@ import java.util.regex.Pattern;
 public class OnSongBuilder {
     private static final Logger logger = LoggerFactory.getLogger(
             MethodHandles.lookup().lookupClass());
-    private final ChordDetector chordDetector = new ChordDetector();
 
     public String buildOnSong(String rawOcrText, String title, String artist, boolean emptyTextBox) {
         logger.info("rawOCRText: {}}", rawOcrText);
@@ -138,7 +137,7 @@ public class OnSongBuilder {
         String[] words = input.split("\\s+");
         StringBuilder sb = new StringBuilder();
         for (String word : words) {
-            if (sb.length() > 0) sb.append(' ');
+            if (!sb.isEmpty()) sb.append(' ');
             if (word.isEmpty()) continue;
             sb.append(Character.toUpperCase(word.charAt(0)));
             sb.append(word.substring(1).toLowerCase());

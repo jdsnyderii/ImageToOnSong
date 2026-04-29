@@ -10,6 +10,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,28 +22,28 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Integration test for the full OCR → OnSong pipeline.
- *
+ * <p>
  * Test data layout under src/test/resources:
- *
- *   src/test/resources/
- *     images/
- *       forgiving_god.png
- *       good_father.png
- *       ...
- *     expected-outputs/
- *       forgiving_god.txt     ← expected OnSong text for forgiving_god.png
- *       good_father.txt
- *       ...
- *
+ * <p>
+ * src/test/resources/
+ * images/
+ * forgiving_god.png
+ * good_father.png
+ * ...
+ * expected-outputs/
+ * forgiving_god.txt     ← expected OnSong text for forgiving_god.png
+ * good_father.txt
+ * ...
+ * <p>
  * Naming convention:
- *   Every image file must have a corresponding expected output file with
- *   the same base name and a .txt extension.
- *
+ * Every image file must have a corresponding expected output file with
+ * the same base name and a .txt extension.
+ * <p>
  * Adding a new test case:
- *   1. Drop the image into src/test/resources/images/
- *   2. Run the pipeline manually once and capture the correct output
- *   3. Save it as src/test/resources/expected-outputs/<basename>.txt
- *
+ * 1. Drop the image into src/test/resources/images/
+ * 2. Run the pipeline manually once and capture the correct output
+ * 3. Save it as src/test/resources/expected-outputs/<basename>.txt
+ * <p>
  * The test discovers image files automatically — no code changes needed
  * when new test cases are added.
  */
@@ -51,9 +52,9 @@ import static org.junit.jupiter.api.Assertions.fail;
 @Execution(ExecutionMode.CONCURRENT)
 class OcrPipelineTest {
 
-    private static final Path RESOURCES     = Paths.get("src", "test", "resources");
-    private static final Path IMAGES_DIR    = RESOURCES.resolve("images");
-    private static final Path EXPECTED_DIR  = RESOURCES.resolve("expected-outputs");
+    private static final Path RESOURCES = Paths.get("src", "test", "resources");
+    private static final Path IMAGES_DIR = RESOURCES.resolve("images");
+    private static final Path EXPECTED_DIR = RESOURCES.resolve("expected-outputs");
     private static TessData tessData;  // ← holds reference so it isn't GC'd
 
 
@@ -63,14 +64,15 @@ class OcrPipelineTest {
         tessData = new TessData();
 
         try {
-            Platform.startup(() -> {});
+            Platform.startup(() -> {
+            });
         } catch (IllegalStateException e) {
             // Toolkit already initialized — safe to ignore
         }
     }
 
     @AfterAll
-    static void cleanup() throws Exception {
+    static void cleanup() {
         tessData.close();
     }
 
@@ -79,9 +81,9 @@ class OcrPipelineTest {
     /**
      * Discovers all image files under src/test/resources/images and returns
      * them as a stream of DynamicTest arguments.
-     *
+     * <p>
      * Supported extensions: png, jpg, jpeg.
-     *
+     * <p>
      * Each argument is a Path to the image file. JUnit names each test case
      * from the file name so failures clearly identify which image broke.
      */
@@ -91,15 +93,15 @@ class OcrPipelineTest {
             return Stream.empty();
         }
 
-        return Files.walk(IMAGES_DIR)
-                .filter(Files::isRegularFile)
-                .filter(p -> {
-                    String name = p.getFileName().toString().toLowerCase();
-                    return name.endsWith(".png")
-                            || name.endsWith(".jpg")
-                            || name.endsWith(".jpeg");
-                })
-                .sorted(); // deterministic ordering
+        try (Stream<Path> sorted = Files.walk(IMAGES_DIR).onClose(() -> {})) {
+            return sorted.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String name = p.getFileName().toString().toLowerCase();
+                        return name.endsWith(".png")
+                                || name.endsWith(".jpg")
+                                || name.endsWith(".jpeg");
+                    });
+        }
     }
 
     // ── Parameterized test ───────────────────────────────────────────────────
@@ -107,11 +109,11 @@ class OcrPipelineTest {
     /**
      * For each image file, runs the full pipeline and compares the output
      * against the corresponding expected output file.
-     *
+     * <p>
      * Failure modes:
-     *   - Missing expected output file → clear message explaining what to create
-     *   - Output mismatch → diff-friendly assertEquals (JUnit shows both values)
-     *
+     * - Missing expected output file → clear message explaining what to create
+     * - Output mismatch → diff-friendly assertEquals (JUnit shows both values)
+     * <p>
      * Title, artist, key, tempo are fixed to known values for test stability.
      * If your test images require different metadata, add a companion
      * .properties file alongside the image and read from it here.
@@ -121,8 +123,8 @@ class OcrPipelineTest {
     void pipelineProducesExpectedOnSongOutput(Path imagePath) throws Exception {
 
         // ── Resolve expected output file ──────────────────────────────────────
-        String baseName    = baseNameOf(imagePath);
-        Path   expectedPath = EXPECTED_DIR.resolve(baseName + ".txt");
+        String baseName = baseNameOf(imagePath);
+        Path expectedPath = EXPECTED_DIR.resolve(baseName + ".txt");
 
         if (!Files.exists(expectedPath)) {
             fail(String.format(
@@ -133,12 +135,12 @@ class OcrPipelineTest {
         }
 
         // ── Run pipeline ──────────────────────────────────────────────────────
-        ImageSource source  = ImageSource.fromFile(imagePath.toFile());
-        OcrProcessor ocr    = new OcrProcessor();
+        ImageSource source = ImageSource.fromFile(imagePath.toFile());
+        OcrProcessor ocr = new OcrProcessor();
         OnSongBuilder builder = new OnSongBuilder();
 
         String rawText = ocr.extractText(source);
-        String actual  = builder.buildOnSong(
+        String actual = builder.buildOnSong(
                 rawText,
                 "Untitled Song",
                 "Unknown Artist",

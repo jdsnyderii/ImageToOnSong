@@ -83,7 +83,7 @@ public class TessData implements AutoCloseable{
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         cleanable.clean();
         TO_CLEAN.remove(cleanable);
     }
