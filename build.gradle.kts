@@ -66,6 +66,7 @@ dependencies {
     val metadataVersion = "2.19.0"
     val logbackVersion = "1.5.32"
     val julslf4jVersion = "2.0.17"
+    val javadiffVersion = "4.12"
 
     // ── JavaFX ────────────────────────────────────────────────────────────────
     implementation("org.openjfx:javafx-controls:$javafxVersion")
@@ -114,7 +115,7 @@ dependencies {
     implementation("org.jsoup:jsoup:$jsoupVersion")
     // JUnit 5 — aggregator pulls in api, params, and engine
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
-
+    testImplementation("io.github.java-diff-utils:java-diff-utils:$javadiffVersion")
     // Required by Gradle to run JUnit Platform tests
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

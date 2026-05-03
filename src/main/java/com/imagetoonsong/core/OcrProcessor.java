@@ -1,37 +1,30 @@
 package com.imagetoonsong.core;
 
-import javafx.scene.image.Image;
-import javafx.scene.image.PixelReader;
-import javafx.scene.image.WritablePixelFormat;
 import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.IntPointer;
 import org.bytedeco.javacpp.indexer.IntIndexer;
 import org.bytedeco.javacv.Java2DFrameConverter;
-import org.bytedeco.javacv.JavaFXFrameConverter;
 import org.bytedeco.javacv.OpenCVFrameConverter;
 import org.bytedeco.opencv.opencv_core.*;
 import org.bytedeco.opencv.opencv_imgproc.Vec4iVector;
-import org.bytedeco.tesseract.ResultIterator;
 import org.bytedeco.tesseract.TessBaseAPI;
 import org.bytedeco.tesseract.global.tesseract;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
-import org.opencv.core.CvType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.imageio.ImageIO;
-import javax.imageio.stream.ImageInputStream;
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.lang.invoke.MethodHandles;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.imagetoonsong.core.ChordDetector.CHORD_PATTERN;
+import static com.imagetoonsong.core.HocrTolerantParser.normalizeChordToken;
+import static com.imagetoonsong.core.HocrTolerantParser.Bbox;
 import static com.imagetoonsong.core.TessData.tessDirPath;
 import static org.bytedeco.opencv.global.opencv_core.*;
 import static org.bytedeco.opencv.global.opencv_imgcodecs.imwrite;
@@ -39,11 +32,16 @@ import static org.bytedeco.opencv.global.opencv_imgproc.*;
 
 public class OcrProcessor {
 
+    public static final String SPAN_OCRX_WORD = "span.ocrx_word";
+    public static final String SPAN_OCR_LINE = "span.ocr_line";
     private static final Logger logger = LoggerFactory.getLogger(
             MethodHandles.lookup().lookupClass());
     public static final String PAGE_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" +
             "0123456789#/()[]., '-{}|";
-    public static final String ENG = "eng";
+    public static final String OCR_LANGUAGE = "eng";
+    public static final String TITLE = "title";
+
+    private static TessBaseAPI tessBaseAPI =  new TessBaseAPI();
 
     public OcrProcessor() {}
 
@@ -100,6 +98,7 @@ public class OcrProcessor {
 
     private static final int PREPROCESSING_SCALE = 4;
 
+    private static final String TESS_CHAR_WHITELIST = "tessedit_char_whitelist";
     // ════════════════════════════════════════════════════════════════════════
     // MAIN OCR PIPELINE
     // ════════════════════════════════════════════════════════════════════════
@@ -120,8 +119,8 @@ public class OcrProcessor {
         logger.info("=== Starting Bytedeco Tesseract OCR ===");
         int tesseractDpi = Math.round(imageSource.dpi());
 
-        TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, ENG);
-        api.SetVariable("tessedit_char_whitelist", PAGE_WHITELIST);
+        TessBaseAPI api = createTessAPI(tesseract.PSM_SPARSE_TEXT, OCR_LANGUAGE);
+        api.SetVariable(TESS_CHAR_WHITELIST, PAGE_WHITELIST);
 
         Java2DFrameConverter biConverter = new Java2DFrameConverter();
         OpenCVFrameConverter.ToMat matConverter = new OpenCVFrameConverter.ToMat();
@@ -147,6 +146,10 @@ public class OcrProcessor {
 
         // ── Re-OCR pass for strumming lines ──────────────────────────────────
         Document doc = Jsoup.parse(html);
+
+        // Mutate document in place — chord words get corrected text,
+        // spatial coordinates unchanged, parser sees clean data
+        applyChordReOcrToDocument(doc, padded, tesseractDpi);
         Map<Integer, String> strummingOverrides = reOcrStrummingLines(doc, padded, tesseractDpi);
 
         api.End();
@@ -159,6 +162,208 @@ public class OcrProcessor {
         logger.info("OCR completed successfully - {} characters returned", result.length());
 
         return result;
+    }
+
+    /**
+     * Translates ALL positional data in an hOCR title attribute from
+     * crop-relative coordinates to document coordinates, while preserving
+     * ALL non-positional metadata (x_wconf, x_size, x_descenders,
+     * x_ascenders, baseline etc.) unchanged.
+     *
+     * hOCR title format (ocrx_word):
+     *   "bbox x1 y1 x2 y2; x_wconf 53"
+     *
+     * hOCR title format (ocr_line):
+     *   "bbox x1 y1 x2 y2; baseline 0 -8; x_size 53; x_descenders 8; x_ascenders 15"
+     *
+     * Only the bbox coordinates are translated — everything after the
+     * first semicolon is preserved as-is.
+     */
+    private static Bbox translateBboxInTitle(
+            Bbox newBox, int cropOriginX, int cropOriginY) {
+
+        return new Bbox(cropOriginX + newBox.xLeft(),
+                cropOriginY + newBox.yTop(), cropOriginX + newBox.xRight(), cropOriginY + newBox.yBottom(), newBox.confidence());
+    }
+
+    /**
+     * Replaces the ocrx_word children of originalLineSpan with those from
+     * newHocr, translating all bboxes from crop space to document space.
+     *
+     * Data transfer contract per word span:
+     *   bbox        → translated to document coordinates       (from new OCR)
+     *   x_wconf     → kept from new OCR pass                   (reflects new quality)
+     *   x_size      → kept from original line span             (font metrics unchanged)
+     *   x_descenders/x_ascenders → kept from original          (font metrics unchanged)
+     *   text content → from new OCR                            (the corrected text)
+     *
+     * The ocr_line span's own title (bbox + baseline + x_size etc.) is
+     * preserved from the original — the line geometry hasn't changed,
+     * only the word content within it has been corrected.
+     */
+    private void replaceLineNode(Element originalLineSpan,
+                                 Document newDoc,
+                                 int cropOriginX,
+                                 int cropOriginY) {
+
+        Element  newLineSp  = newDoc.selectFirst(SPAN_OCR_LINE);
+        if (newLineSp == null) {
+            logger.warn("[replaceLineNode] no ocr_line found in new hOCR — skipping");
+            return;
+        }
+
+        // Extract font metrics from the original line span so they can be
+        // grafted onto new word spans that lack them.
+        // These are physical measurements of the font on the image — they
+        // don't change just because the text content was corrected.
+        String originalTitle    = originalLineSpan.attr("title");
+        String originalXSize    = extractTitleField(originalTitle, "x_size");
+        String originalXDesc    = extractTitleField(originalTitle, "x_descenders");
+        String originalXAsc     = extractTitleField(originalTitle, "x_ascenders");
+
+        // Build replacement word spans with correctly translated bboxes
+        List<Element> newWords = newLineSp.select(SPAN_OCRX_WORD);
+        if (newWords.isEmpty()) {
+            logger.warn("[replaceLineNode] new hOCR produced no ocrx_word spans — skipping");
+            return;
+        }
+
+        for (Element newWord : newWords) {
+            logger.info("Trying chord {}", newWord.text());
+            Bbox newBox = parseBboxFromHocrTitle(newWord.attr("title"));
+            logger.info("Coordinates before {}", newBox);
+            Bbox translatedBox = translateBboxInTitle(newBox, cropOriginX, cropOriginY);
+
+            newWord.attr("title", translatedBox.asAttr());
+            logger.info("Coordinates after {}", translatedBox);
+        }
+
+        // Replace ONLY the word children — keep the line span's own title
+        // (bbox, baseline, x_size, x_descenders, x_ascenders) from the
+        // original since the line geometry is unchanged.
+        originalLineSpan.empty();
+        for (Element newWord : newWords) {
+            originalLineSpan.appendChild(newWord);
+        }
+
+        logger.info("[replaceLineNode] replaced {} word(s) in line yTop={}",
+                newWords.size(),
+                parseBboxFromHocrTitle(originalTitle).yTop()); // yTop for logging
+    }
+
+    /**
+     * Extracts a named field value from an hOCR title string.
+     * e.g. extractTitleField("bbox 0 0 100 50; x_size 53.0", "x_size") → "53.0"
+     * Returns empty string if the field is not present.
+     */
+    private static String extractTitleField(String title, String fieldName) {
+        if (title == null) return "";
+        java.util.regex.Matcher m = Pattern.compile(
+                fieldName + "\\s+([\\d.\\-]+)").matcher(title);
+        return m.find() ? m.group(1) : "";
+    }
+
+    private String runLineOcr(Mat crop, int dpi) {
+        int pageSegMode = tesseract.PSM_SINGLE_LINE;
+        TessBaseAPI api = createTessAPI(pageSegMode, OCR_LANGUAGE);
+        logger.info("Running runLineOcr tesseract with {}", pageSegMode);
+        try {
+            api.SetVariable("tessedit_char_whitelist", CHORD_LINE_WHITELIST);
+            // Chord symbols are not real words — any dictionary or n-gram model
+            // will actively hurt accuracy by pushing OCR toward real words.
+            // e.g. "Fmaj7" gets corrected toward "family" or similar.
+            api.SetVariable("load_system_dawg",         "0");
+            api.SetVariable("load_freq_dawg",           "0");
+            api.SetVariable("load_punc_dawg",           "0");
+            api.SetVariable("load_number_dawg",         "0");
+            api.SetVariable("load_unambig_dawg",        "0");
+            api.SetVariable("load_bigram_dawg",         "0");
+            api.SetVariable("tessedit_enable_doc_dict", "0");
+
+            // Preserve spacing so chord tokens stay separate
+            api.SetVariable("preserve_interword_spaces", "1");
+
+            // Keep small glyphs alive — superscripts are sub-line-height
+            api.SetVariable("textord_min_linesize",      "0.3");
+            api.SetVariable("edges_min_nonhole",         "2");
+            api.SetVariable("textord_noise_sizelimit",   "0.01");
+
+            BytePointer ptr = api.GetHOCRText(0);  // hOCR not plain text
+            if (ptr == null) return "";
+            String hocr = ptr.getString();
+            ptr.deallocate();
+            return hocr;
+
+        } finally {
+            api.End();
+            api.close();
+        }
+    }
+
+    private void applyChordReOcrToDocument(Document doc, Mat source, int dpi) {
+
+        for (Element lineSpan : doc.select(SPAN_OCR_LINE)) {
+            if (!looksLikeChordLineNeedingReOcr(lineSpan)) continue;
+
+            Bbox lineBbox = parseBboxFromHocrTitle(lineSpan.attr("title"));
+            if (lineBbox == null) continue;
+
+            // Step 1 — crop the line from the preprocessed image
+            int cropOriginX = 0;
+            int cropOriginY = Math.max(0, lineBbox.yTop() - STRUMMING_CROP_VERT_PAD);
+            int cropHeight  = lineBbox.yBottom() - lineBbox.yTop() + STRUMMING_CROP_VERT_PAD * 2;
+            int cropWidth = Math.max(lineBbox.xRight() - lineBbox.xLeft(), source.cols() - 1);
+            if (cropHeight <= 0 || cropWidth <=0 ) {
+                logger.warn("BBox is wrong {}", lineBbox );
+                continue;
+            }
+
+            Mat lineCrop = new Mat(source, new Rect(cropOriginX, cropOriginY, cropWidth, cropHeight));
+
+            // Step 2 — run fresh Tesseract pass on the crop
+            String newHocr = runLineOcr(lineCrop, dpi);
+            Document newDoc = Jsoup.parse(newHocr);
+            logger.info("First pass line OCR {}", newDoc.html());
+            runChordOcr(lineCrop, dpi, newDoc);
+            logger.info("Second pass line OCR {}", newDoc.html());
+            lineCrop.release();
+
+            // Step 3 — substitute corrected words back into the document
+            replaceLineNode(lineSpan, newDoc, cropOriginX, cropOriginY);
+        }
+    }
+
+    private void runChordOcr(Mat crop, int dpi, Document newDoc) {
+        TessBaseAPI api = createTessAPI(tesseract.PSM_SINGLE_CHAR, OCR_LANGUAGE);
+        api.SetVariable(TESS_CHAR_WHITELIST, CHORD_LINE_WHITELIST);
+
+        Element lineSpan = newDoc.select(SPAN_OCR_LINE).first();
+        if (lineSpan == null) {
+            logger.warn("newDoc is malformed {}", newDoc.html());
+            return;
+        }
+        for (Element wordNode : lineSpan.select(SPAN_OCRX_WORD)) {
+            Bbox wordBox = parseBboxFromHocrTitle(wordNode.attr(TITLE));
+            // Step 1 — crop the line from the preprocessed image
+
+            int cropOriginX = 0;
+            int cropOriginY = Math.max(0, wordBox.yTop() - STRUMMING_CROP_VERT_PAD);
+            int cropHeight  = Math.min(
+                    wordBox.yBottom() - wordBox.yTop() + STRUMMING_CROP_VERT_PAD * 2,
+                    crop.rows() - cropOriginY);
+            int cropWidth = wordBox.xRight() - wordBox.xLeft();
+            if (cropWidth <= 0 || cropHeight <= 0) continue;
+
+            Mat  wordCrop = new Mat(crop, new Rect(cropOriginX, cropOriginY, cropWidth, cropHeight));
+            setTessImageParameters(api, wordCrop, dpi);
+            api.GetUTF8Text();
+            BytePointer ptr =api.GetUTF8Text();
+            if (ptr == null) continue;
+            String chord = ptr.getString();
+            wordNode.text(chord);
+            ptr.deallocate();
+            logger.info("Chord OCR found {}", chord);
+        }
     }
 
     /**
@@ -186,6 +391,7 @@ public class OcrProcessor {
         logger.info("Tesseract initialized with tessdata {}", tessDirPath);
 
         api.SetPageSegMode(pageSegMode);
+        api.SetVariable("tessedit_ocr_engine_mode", String.valueOf(tesseract.OEM_LSTM_ONLY));
         api.SetVariable("preserve_interword_spaces", "1");
         api.SetVariable("tosp_min_sane_kn_sp", "1.5");
         api.SetVariable("textord_tabfind_find_tables", "0");
@@ -249,14 +455,14 @@ public class OcrProcessor {
         Map<Integer, String> overrides = new LinkedHashMap<>();
 
         // ── Iterate at the LINE level ─────────────────────────────────────────
-        for (Element lineSpan : doc.select("span.ocr_line")) {
+        for (Element lineSpan : doc.select(SPAN_OCR_LINE)) {
 
             // Composite text of all words on this line
             String lineText = lineSpan.text();
 
             if (!looksLikeStrummingLine(lineText)) continue;
 
-            int[] lineBbox = parseBboxFromHocrTitle(lineSpan.attr("title"));
+            Bbox lineBbox = parseBboxFromHocrTitle(lineSpan.attr("title"));
             if (lineBbox == null) continue;
 
             // ── Full-width crop using the line's vertical extent ──────────────
@@ -269,9 +475,9 @@ public class OcrProcessor {
             //   The ocr_line bbox encompasses all characters including ascenders
             //   and descenders. STRUMMING_CROP_VERT_PAD adds a small buffer
             //   so characters touching the top/bottom of the bbox are not clipped.
-            int y = Math.max(0, lineBbox[1] - STRUMMING_CROP_VERT_PAD);
+            int y = Math.max(0, lineBbox.yTop() - STRUMMING_CROP_VERT_PAD);
             int h = Math.min(
-                    lineBbox[3] - lineBbox[1] + STRUMMING_CROP_VERT_PAD * 2,
+                    lineBbox.yBottom() - lineBbox.yTop() + STRUMMING_CROP_VERT_PAD * 2,
                     source.rows() - y);
             int x = 0;
             int w = source.cols();
@@ -284,12 +490,12 @@ public class OcrProcessor {
             crop.release();
 
             if (clean.isEmpty()) {
-                logger.info("[Re-OCR] yTop={}  raw='{}'  →  (empty, skipping)", lineBbox[1], lineText);
+                logger.info("[Re-OCR] yTop={}  raw='{}'  →  (empty, skipping)", lineBbox.yTop(), lineText);
                 continue;
             }
 
             logger.info("[Re-OCR] yTop={}  raw='{}'  →  clean='{}",
-                    lineBbox[1], lineText, clean);
+                    lineBbox.yTop(), lineText, clean);
 
             // ── Register override against ALL child word yTops ────────────────
             //
@@ -299,15 +505,15 @@ public class OcrProcessor {
             // match (line yTop ≈ min word yTop, but not always equal after the
             // parser's running-average cluster). Registering every child word's
             // yTop guarantees at least one match for any clustering outcome.
-            for (Element wordSpan : lineSpan.select("span.ocrx_word")) {
-                int[] wordBbox = parseBboxFromHocrTitle(wordSpan.attr("title"));
+            for (Element wordSpan : lineSpan.select(SPAN_OCRX_WORD)) {
+                Bbox wordBbox = parseBboxFromHocrTitle(wordSpan.attr("title"));
                 if (wordBbox != null) {
-                    overrides.put(wordBbox[1], clean);
+                    overrides.put(wordBbox.yTop(), clean);
                 }
             }
 
             // Also register the line-level yTop as a safety fallback
-            overrides.put(lineBbox[1], clean);
+            overrides.put(lineBbox.yTop(), clean);
         }
 
         return overrides;
@@ -321,6 +527,10 @@ public class OcrProcessor {
         } else {
             logger.error("Could not save crop: {}", outputPath);
         }
+    }
+
+    private static boolean looksLikeSectionLine(String text) {
+        return SectionDetector.detectSectionCaseInsensitive(text);
     }
 
     /**
@@ -370,9 +580,7 @@ public class OcrProcessor {
      * names become [G], [D/F#] etc. ready for OnSong/ChordPro output.
      */
     private String runStrummingLineOcr(Mat crop, int dpi) {
-//        GaussianBlur(crop, crop, new Size(1, 3), 0);
-
-        MatchedCharacterResults results = runIndividualCharacterOcr(crop, dpi);
+        MatchedCharacterResults results = runIndividualCharacterOcr(crop, dpi, STRUMMING_WHITELIST);
         logger.info("Caracter OCR: {}", results.ocrChars);
 
         ChordDetector detector = new ChordDetector();
@@ -395,9 +603,9 @@ public class OcrProcessor {
      * forgiving of whitespace margins around the character.
      */
     private String retryWithSingleWord(Mat charCrop, int dpi) {
-        TessBaseAPI fallback = createTessAPI(tesseract.PSM_SINGLE_WORD, ENG);
+        TessBaseAPI fallback = createTessAPI(tesseract.PSM_SINGLE_WORD, OCR_LANGUAGE);
         try {
-            fallback.SetVariable("tessedit_char_whitelist",  STRUMMING_WHITELIST);
+            fallback.SetVariable(TESS_CHAR_WHITELIST,  STRUMMING_WHITELIST);
             fallback.SetVariable("load_punc_dawg",           "0");
             fallback.SetVariable("load_number_dawg",         "0");
             fallback.SetVariable("load_unambig_dawg",        "0");
@@ -420,6 +628,59 @@ public class OcrProcessor {
         }
     }
     private record MatchedCharacterResults(boolean missingMatches, String ocrChars) {}
+
+    /**
+     * Chord-line whitelist — everything valid in a chord symbol.
+     * Wider than STRUMMING_WHITELIST since chord lines have richer notation:
+     * qualities (maj, min, sus, dim, aug, add), extensions (7,9,11,13),
+     * slash chords (/), accidentals (#, b), superscript Unicode chars.
+     *
+     * Excludes prose letters (full words) so Tesseract can't produce lyric text.
+     */
+    private static final String CHORD_LINE_WHITELIST =
+            "ABCDEFGMbmajisudgntø°△Δ#²³⁴⁵⁶⁷⁸⁹ˢᵘᵐᵃʲᵒᵈⁱⁿᵗᵍ⁺⁻/() 0123456789";
+
+
+    private static boolean looksLikeChordLineNeedingReOcr(Element lineSpan) {
+        List<Element> words = lineSpan.select(SPAN_OCRX_WORD);
+        if (words.isEmpty()) return false;
+
+        boolean hasLowConfidence  = false;
+        boolean hasValidChord     = false;
+        boolean shouldSkip      = false;
+
+        for (Element word : words) {
+            String text = word.text().trim();
+            if (text.isEmpty()) continue;
+
+            // Lyric guard — any real prose word disqualifies the line
+            if (text.matches(".*[a-z]{4,}.*")) {
+                shouldSkip = true;
+                break;
+            }
+
+            // Token too long to be a chord symbol
+            if (looksLikeStrummingLine(text) || looksLikeSectionLine(text)) {
+                shouldSkip = true;
+                break;
+            }
+
+            // Check confidence
+            Bbox bbox = parseBboxFromHocrTitle(word.attr("title"));
+            if (bbox != null && bbox.confidence() < 70) {
+                hasLowConfidence = true;
+            }
+
+            // Check for valid chord
+            String normalized = normalizeChordToken(text);
+            if (CHORD_PATTERN.matcher(normalized).matches()) {
+                hasValidChord = true;
+            }
+        }
+
+        if (shouldSkip) return false;
+        return hasLowConfidence;
+    }
 
     /**
      * Segments a strumming-line crop into individual character contours and
@@ -448,7 +709,7 @@ public class OcrProcessor {
      * [] brackets). Only chord names should be in [] — convertToBracketed()
      * handles that. Wrapping '/' in [/] was confusing the downstream format.
      */
-    public MatchedCharacterResults runIndividualCharacterOcr(Mat gray, int dpi) {
+    public MatchedCharacterResults runIndividualCharacterOcr(Mat gray, int dpi, String white_list) {
         Mat thresh = new Mat();
         MatVector contours = new MatVector();
         StringBuilder result = new StringBuilder();
@@ -473,9 +734,9 @@ public class OcrProcessor {
 
         int recognizedCount = 0;
 
-        TessBaseAPI api = createTessAPI(tesseract.PSM_SINGLE_CHAR, ENG);
+        TessBaseAPI api = createTessAPI(tesseract.PSM_SINGLE_CHAR, OCR_LANGUAGE);
         try {
-            api.SetVariable("tessedit_char_whitelist",   STRUMMING_WHITELIST);
+            api.SetVariable(TESS_CHAR_WHITELIST,   white_list);
             api.SetVariable("load_punc_dawg",            "0");
             api.SetVariable("load_number_dawg",          "0");
             api.SetVariable("load_unambig_dawg",         "0");
@@ -537,7 +798,7 @@ public class OcrProcessor {
                             // Tesseract returned nothing — emit warning marker so
                             // the caller knows the output is incomplete.
                             result.append("[⚠️]");
-                            logger.info("  [⚠️] x={} w={} h={} ratio={} — Tesseract returned empty%n",
+                            logger.info("  [⚠️] x={} w={} h={} ratio={} — Tesseract returned empty",
                                     rect.x(), rect.width(), rect.height(), aspectRatio);
                         }
                     }
@@ -561,20 +822,13 @@ public class OcrProcessor {
         return String.valueOf(last).matches("[A-G#b0-9majisudg]");
     }
 
+
     /**
      * Parses "bbox x_left y_top x_right y_bottom" from a Tesseract hOCR title string.
-     * Returns int[4] = { xLeft, yTop, xRight, yBottom } or null on failure.
+     * Returns Bbox record
      */
-    private static int[] parseBboxFromHocrTitle(String title) {
-        if (title == null) return null;
-        Matcher m = Pattern.compile("bbox\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)").matcher(title);
-        if (!m.find()) return null;
-        return new int[]{
-                Integer.parseInt(m.group(1)),
-                Integer.parseInt(m.group(2)),
-                Integer.parseInt(m.group(3)),
-                Integer.parseInt(m.group(4))
-        };
+    private static Bbox parseBboxFromHocrTitle(String title) {
+        return HocrTolerantParser.parseBbox(title);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -676,9 +930,33 @@ public class OcrProcessor {
 
         cvtColor(src, gray, COLOR_BGR2GRAY);
         resize(gray, upscaled,
-                new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE), .9f, .9f, INTER_LANCZOS4);
+                new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
+                .9f, .9f, INTER_LANCZOS4);
         normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
         threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
+
+        // ── Dark-background detection and inversion ───────────────────────────
+        //
+        // Tesseract expects black text on a white background (THRESH_BINARY).
+        // Some sources (dark-mode screenshots, inverted chord charts) have white
+        // text on a black background. After binarization, the mean pixel value
+        // tells us which case we have:
+        //
+        //   mean > 128 → mostly white → black text on white → correct, no action
+        //   mean < 128 → mostly dark  → white text on black → invert
+        //
+        // meanStdDev on a binary image is either 0 or 255 per pixel, so the mean
+        // directly reflects the ratio of white to black pixels.
+        Scalar mean = mean(binary);
+        double meanBrightness = mean.get(0);
+        logger.info("Binary image mean brightness: {:.1f} — {}",
+            meanBrightness,
+            meanBrightness < 128 ? "dark background detected, inverting" : "light background, no inversion");
+
+        if (meanBrightness < 128) {
+            // Invert: white text on black → black text on white
+            bitwise_not(binary, binary);
+        }
 
         gray.release(); upscaled.release(); normalized.release();
         return binary;

@@ -3,10 +3,10 @@ package com.imagetoonsong.core;
 
 public class SectionDetector {
 
-    public static final String SECTION_DETECTOR = "(?i)^(Verse|Chorus|Bridge|Intro|Outro|Pre-?Chorus|Tag|Instrumental|Interlude|Break?down|Ending|Code|Refrain).*:$";
+    public static final String SECTION_DETECTOR = "(?i)^(Verse|Chorus|Bridge|Intro|Outro|Pre-?Chorus|Tag|Instrumental|Interlude|Break?down|Ending|Coda|Refrain).*:$";
 
     static boolean detectSectionCaseInsensitive(String line) {
-        return line.matches("(?i)^[^a-zA-Z]*(verse|chorus|bridge|intro|outro|pre-?chorus|tag|interlude|instrumental|break?down|ending)[^a-zA-Z]*.*");
+        return line.matches("(?i)^[^a-zA-Z]*(verse|chorus|bridge|intro|outro|pre-?chorus|tag|interlude|instrumental|break?down|ending|coda|refrain)[^a-zA-Z]*.*");
     }
 
     static boolean isSectionHeader(String line) {

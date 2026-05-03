@@ -123,7 +123,7 @@ public record ImageSource(Image image, int dpi, String source) {
         saveImage(image, outputFile);
     }
 
-    private static void saveImage(Image fxImage, File outputFile) {
+    public static void saveImage(Image fxImage, File outputFile) {
         BufferedImage bImage = toBufferedImage(fxImage);
 
         try {
@@ -171,7 +171,7 @@ public record ImageSource(Image image, int dpi, String source) {
         return toBufferedImage(image);
     }
 
-    private static BufferedImage toBufferedImage(Image fxImage) {
+    public static BufferedImage toBufferedImage(Image fxImage) {
         int width = (int) fxImage.getWidth();
         int height = (int) fxImage.getHeight();
 

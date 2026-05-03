@@ -52,7 +52,7 @@ public class ChordDetector {
      *
      * Uses CHORD_INLINE (not CHORD_PATTERN) so it can scan within a string.
      */
-    public String convertToBracketed(String line) {
+    public static String convertToBracketed(String line) {
         if (line == null || line.isEmpty()) return line;
         return CHORD_INLINE.matcher(line).replaceAll(match -> "[" + match.group() + "]");
     }

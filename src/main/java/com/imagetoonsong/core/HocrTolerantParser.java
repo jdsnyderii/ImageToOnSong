@@ -75,20 +75,20 @@ public class HocrTolerantParser {
         List<LogicalLine> raw = new ArrayList<>();
 
         for (Element lineSpan : doc.select("span.ocr_line")) {
-            int[] lineBbox = parseBbox(lineSpan.attr("title"));
+            Bbox lineBbox = parseBbox(lineSpan.attr("title"));
             if (lineBbox == null) continue;
 
-            LogicalLine logicalLine = new LogicalLine(lineBbox[1]);
+            LogicalLine logicalLine = new LogicalLine(lineBbox.yTop);
 
             for (Element wordSpan : lineSpan.select("span.ocrx_word")) {
-                int[] wordBbox = parseBbox(wordSpan.attr("title"));
+                Bbox wordBbox = parseBbox(wordSpan.attr("title"));
                 if (wordBbox == null) continue;
                 String text = wordSpan.text().trim();
                 if (!text.isEmpty()) {
                     logicalLine.words.add(
                             new WordEntry(text,
-                                    wordBbox[0], wordBbox[1],
-                                    wordBbox[2], wordBbox[3], wordBbox[4]));
+                                    wordBbox.xLeft, wordBbox.yTop,
+                                    wordBbox.xRight, wordBbox.yBottom, wordBbox.confidence));
                 }
             }
 
@@ -572,11 +572,47 @@ public class HocrTolerantParser {
 
     // ── Token normalisation ──────────────────────────────────────────────────────
 
-    private static final Map<String, String> OCR_CORRECTIONS = Map.of(
-            "é", "s", "è", "s", "ê", "s", "ë", "s",
-            "0", "O",
-            "1", "l"
-    );
+    private static final Map<String, String> OCR_CORRECTIONS;
+
+    static {
+        OCR_CORRECTIONS = new LinkedHashMap<>();
+// Superscript digit normalization
+        OCR_CORRECTIONS.put("²", "2");
+        OCR_CORRECTIONS.put("³", "3");
+        OCR_CORRECTIONS.put("⁴", "4");
+        OCR_CORRECTIONS.put("⁵", "5");
+        OCR_CORRECTIONS.put("⁶", "6");
+        OCR_CORRECTIONS.put("⁷", "7");
+        OCR_CORRECTIONS.put("⁸", "8");
+        OCR_CORRECTIONS.put("⁹", "9");
+
+// Superscript letter normalization for chord quality suffixes.
+// Unicode has superscript forms for some letters but not all —
+// where no Unicode superscript exists, OCR typically outputs the
+// base character already, so no correction is needed for those.
+        OCR_CORRECTIONS.put("ᵃ", "a");  // add   → Cadd9
+        OCR_CORRECTIONS.put("ᵈ", "d");  // dim, add
+        OCR_CORRECTIONS.put("ⁱ", "i");  // dim, min
+        OCR_CORRECTIONS.put("ᵐ", "m");  // maj, min, m7
+        OCR_CORRECTIONS.put("ⁿ", "n");  // min, dim
+        OCR_CORRECTIONS.put("ᵒ", "o");  // dim (diminished °)
+        OCR_CORRECTIONS.put("ˢ", "s");  // sus
+        OCR_CORRECTIONS.put("ᵗ", "t");  // alt
+        OCR_CORRECTIONS.put("ᵘ", "u");  // sus, aug, dim
+        OCR_CORRECTIONS.put("ᵍ", "g");  // aug
+        OCR_CORRECTIONS.put("ʲ", "j");  // maj
+        OCR_CORRECTIONS.put("ʳ", "r");  // aug (augmented)
+
+// Common superscript symbols used as chord quality shorthand
+        OCR_CORRECTIONS.put("°", "dim"); // ° → dim  (e.g. B° → Bdim)
+        OCR_CORRECTIONS.put("ø", "m7b5");// ø → m7b5 (half-diminished)
+        OCR_CORRECTIONS.put("△", "maj"); // △ → maj  (jazz notation)
+        OCR_CORRECTIONS.put("Δ", "maj"); // Δ → maj  (alternate triangle)
+
+// Superscript plus/minus occasionally used in jazz charts
+        OCR_CORRECTIONS.put("⁺", "aug"); // ⁺ → aug
+        OCR_CORRECTIONS.put("⁻", "b");   // ⁻ → flat (e.g. b5, b9)
+    };
 
     /**
      * FIX 2: Ghosting removal is now precise — only strips second char when it is
@@ -587,7 +623,7 @@ public class HocrTolerantParser {
      * "Cc7"   → 'c' == toLowerCase('C')='c' → stripped → "C7" ✓
      * "Gg"    → 'g' == toLowerCase('G')='g' → stripped → "G" ✓
      */
-    private static String normalizeChordToken(String raw) {
+    public static String normalizeChordToken(String raw) {
         String s = raw;
         for (Map.Entry<String, String> e : OCR_CORRECTIONS.entrySet()) {
             s = s.replace(e.getKey(), e.getValue());
@@ -620,22 +656,29 @@ public class HocrTolerantParser {
 
     // ── hOCR parsing ─────────────────────────────────────────────────────────────
 
-    private static int[] parseBbox(String title) {
+    public record Bbox(int xLeft, int yTop, int xRight, int yBottom, int confidence) {
+        int[] asIntArray() {
+            return new int[]{xLeft, yTop, xRight, yBottom, confidence};
+        }
+        String asAttr() {
+            return String.format("bbox %d %d %d %d ; x_wconf %d", xLeft, yTop, xRight, yBottom, confidence);
+        }
+    };
+
+    public static Bbox parseBbox(String title) {
         if (title == null) return null;
         Matcher m = Pattern.compile(
                 "bbox\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)(?:.*?x_wconf\\s+(\\d+))?"
         ).matcher(title);
         if (!m.find()) return null;
-        return new int[]{
-                Integer.parseInt(m.group(1)),           // xLeft
+        return new Bbox(Integer.parseInt(m.group(1)),           // xLeft
                 Integer.parseInt(m.group(2)),           // yTop
                 Integer.parseInt(m.group(3)),           // xRight
                 Integer.parseInt(m.group(4)),           // yBottom
                 m.group(5) != null
                         ? Integer.parseInt(m.group(5))  // wconf
-                        : 100                           // default to 100 if absent
-                // (ocr_line spans have no x_wconf)
-        };
+                        : 0
+        );
     }
 
     // ── Inner data classes ───────────────────────────────────────────────────────
