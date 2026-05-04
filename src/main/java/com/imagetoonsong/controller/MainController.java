@@ -116,7 +116,7 @@ public class MainController {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Select Chord Sheet Image");
         fileChooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("Image Files", "*.png", "*.jpg", "*.jpeg", "*.bmp")
+            new FileChooser.ExtensionFilter("Image Files", "*.png", "*.jpg", "*.jpeg", "*.bmp")
         );
 
         File file = fileChooser.showOpenDialog(null);
@@ -161,9 +161,9 @@ public class MainController {
             Task<String> ocrTask = new Task<>() {
                 @Override
                 protected String call() throws Exception {
-                    String rawText = ocrProcessor.extractText(imageSource);
-                    logger.info("OCR finished - raw text length: {}", rawText.length());
-                    return builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
+                String rawText = ocrProcessor.extractText(imageSource);
+                logger.info("OCR finished - raw text length: {}", rawText.length());
+                return builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
                 }
             };
 

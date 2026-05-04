@@ -30,28 +30,28 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Integration test for the full OCR → OnSong pipeline.
- *
+ * <p>
  * Test data layout under src/test/resources:
- *
- *   src/test/resources/
- *     images/
- *       forgiving_god.png
- *       good_father.png
- *     expected-outputs/
- *       forgiving_god.txt
- *       good_father.txt
- *
+ * <p>
+ * src/test/resources/images/
+ * forgiving_god.png
+ * good_father.png
+ * expected-outputs/
+ * forgiving_god.txt
+ * good_father.txt
+ * <p>
  * On failure, a unified diff is printed to the log so you can see
  * exactly which lines changed without manually comparing two long strings.
- *
+ * <p>
  * Diff output format (standard unified diff):
- *   --- expected/forgiving_god.txt
- *   +++ actual
- *   @@ -12,4 +12,4 @@
- *    [G]He's a forgiving God
- *   -[D]No longer have to wander          ← in expected, missing from actual
- *   +[D]No longer have to wonder          ← in actual, different from expected
- *    [G/D]Calling sons and daughters
+ * --- expected/forgiving_god.txt
+ * +++ actual
+ * <p>
+ * `@@` -12, 4 +12,4 `@@`
+ * [G]He's a forgiving God
+ * -[D]No longer have to wander          ← in expected, missing from actual
+ * +[D]No longer have to wonder          ← in actual, different from expected
+ * [G/D]Calling sons and daughters
  */
 class OcrPipelineTest {
 
@@ -135,6 +135,7 @@ class OcrPipelineTest {
         String rawText = ocr.extractText(source);
         String actual  = builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", true)
                 .stripTrailing();
+        ocr.shutdown();
 
         log.info("[{}] OCR complete in {}ms", baseName, System.currentTimeMillis() - start);
 

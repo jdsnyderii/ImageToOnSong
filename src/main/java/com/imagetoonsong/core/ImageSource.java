@@ -4,11 +4,12 @@ import javafx.application.Platform;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.image.Image;
-import javafx.scene.image.PixelReader;
-import javafx.scene.image.WritableImage;
-import javafx.scene.image.WritablePixelFormat;
+import javafx.scene.image.*;
 import javafx.scene.transform.Transform;
+import org.bytedeco.javacv.JavaFXFrameConverter;
+import org.bytedeco.javacv.OpenCVFrameConverter;
+import org.bytedeco.opencv.global.opencv_imgproc;
+import org.bytedeco.opencv.opencv_core.Mat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,6 +18,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -123,6 +125,46 @@ public record ImageSource(Image image, int dpi, String source) {
         saveImage(image, outputFile);
     }
 
+    public static void saveImage(Mat originalMat, File outputFile) {
+// Converter for Mat -> Frame
+//        try (OpenCVFrameConverter.ToMat converterToMat = new OpenCVFrameConverter.ToMat(); JavaFXFrameConverter converterToFX = new JavaFXFrameConverter()) {
+//            saveImage(converterToFX.convert(converterToMat.convert(mat)), outputFile);
+//        }
+
+        if (originalMat == null || originalMat.empty()) return;
+
+        Mat bgrMat = new Mat();
+        int channels = originalMat.channels();
+
+        // Force conversion to 3-channel BGR to avoid "3 channels" support errors
+        if (channels == 1) {
+            opencv_imgproc.cvtColor(originalMat, bgrMat, opencv_imgproc.COLOR_GRAY2BGR);
+        } else if (channels == 4) {
+            opencv_imgproc.cvtColor(originalMat, bgrMat, opencv_imgproc.COLOR_BGRA2BGR);
+        } else {
+            bgrMat = originalMat;
+        }
+
+        int width = bgrMat.cols();
+        int height = bgrMat.rows();
+        int stride = (int) bgrMat.step(); // Vital for Bytedeco memory alignment
+
+        WritableImage writableImage = new WritableImage(width, height);
+        PixelWriter pixelWriter = writableImage.getPixelWriter();
+
+        // createBuffer() provides the direct pointer to native memory
+        ByteBuffer buffer = bgrMat.createBuffer();
+
+        pixelWriter.setPixels(0, 0, width, height,
+                PixelFormat.getByteRgbInstance(),
+                buffer, stride);
+
+        saveImage(writableImage, outputFile);
+        // Only close bgrMat if it was a temporary conversion
+        if (bgrMat != originalMat) {
+            bgrMat.close();
+        }
+    }
     public static void saveImage(Image fxImage, File outputFile) {
         BufferedImage bImage = toBufferedImage(fxImage);
 

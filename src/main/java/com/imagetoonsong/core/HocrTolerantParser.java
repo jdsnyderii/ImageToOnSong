@@ -1,6 +1,5 @@
 package com.imagetoonsong.core;
 
-import static com.imagetoonsong.core.ChordDetector.CHORD_PATTERN;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.slf4j.Logger;
@@ -11,6 +10,8 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.imagetoonsong.core.ChordDetector.*;
+
 public class HocrTolerantParser {
 
     private static final Logger logger = LoggerFactory.getLogger(
@@ -20,7 +21,7 @@ public class HocrTolerantParser {
     /**
      * Words whose y_top values differ by less than this are on the same line.
      */
-    private static final int Y_TOLERANCE = 12;
+    public static final int Y_TOLERANCE = 12;
 
     /**
      * Unanchored chord extractor — used ONLY inside parseSingleTokenStrummingLine()
@@ -48,26 +49,21 @@ public class HocrTolerantParser {
      * The fallback path (isStrummingLine / renderStrummingLine) handles any lines
      * that were not caught by the re-OCR pass (e.g. multi-token garbled lines).
      *
-     * @param doc                Parsed html Document
+     * @param lines                Logical Lines from the Document
      * @param strummingOverrides yTop → clean text from OcrProcessor re-OCR pass
      */
-    public static String parseHocrToString(Document doc, Map<Integer, String> strummingOverrides) {
-
-//        List<WordEntry> allWords = extractWords(doc);
-//        if (allWords.isEmpty()) return "";
-
-        List<LogicalLine> lines = clusterIntoLines(doc);
-
-        lines.sort(Comparator.comparingInt(l -> l.yTop));
+    public static String parseLogicalLines(List<LogicalLine> lines, Map<Integer, String> strummingOverrides) {
+        // Ensure Lines and words are sorted.
+        lines.sort(Comparator.comparingInt(l -> l.bbox.yTop()));
         for (LogicalLine line : lines) {
-            line.words.sort(Comparator.comparingInt(w -> w.xLeft));
+            line.words.sort(Comparator.comparingInt(w -> w.bbox.xLeft));
         }
 
         return renderOnSong(lines, strummingOverrides);
     }
 
     // ── Step 2 : line clustering ────────────────────────────────────────────────
-    private static List<LogicalLine> clusterIntoLines(Document doc) {
+    public static List<LogicalLine> clusterIntoLines(Document doc) {
 
         // ── Pass 1: build one LogicalLine per ocr_line span ──────────────────
         // Using ocr_line as the anchor fixes the word-yTop-outside-line-bbox
@@ -78,7 +74,7 @@ public class HocrTolerantParser {
             Bbox lineBbox = parseBbox(lineSpan.attr("title"));
             if (lineBbox == null) continue;
 
-            LogicalLine logicalLine = new LogicalLine(lineBbox.yTop);
+            LogicalLine logicalLine = new LogicalLine(lineBbox, LineType.UNCLASSIFIED);
 
             for (Element wordSpan : lineSpan.select("span.ocrx_word")) {
                 Bbox wordBbox = parseBbox(wordSpan.attr("title"));
@@ -86,9 +82,7 @@ public class HocrTolerantParser {
                 String text = wordSpan.text().trim();
                 if (!text.isEmpty()) {
                     logicalLine.words.add(
-                            new WordEntry(text,
-                                    wordBbox.xLeft, wordBbox.yTop,
-                                    wordBbox.xRight, wordBbox.yBottom, wordBbox.confidence));
+                            new WordEntry(text, wordBbox));
                 }
             }
 
@@ -98,7 +92,7 @@ public class HocrTolerantParser {
         }
 
         // Sort top-to-bottom before merging
-        raw.sort(Comparator.comparingInt(l -> l.yTop));
+        raw.sort(Comparator.comparingInt(l -> l.bbox.yTop()));
 
         // ── Pass 2: merge LogicalLines whose yTops are within tolerance ───────
         //
@@ -118,11 +112,12 @@ public class HocrTolerantParser {
             }
 
             LogicalLine last = merged.getLast();
-            if (Math.abs(current.yTop - last.yTop) <= Y_TOLERANCE) {
+            if (Math.abs(current.bbox.yTop() - last.bbox.yTop()) <= Y_TOLERANCE) {
                 // Same visual line — absorb words into the existing LogicalLine
                 last.words.addAll(current.words);
                 // Keep yTop as the minimum (topmost) of the two
-                last.yTop = Math.min(last.yTop, current.yTop);
+
+                last.bbox = new Bbox(last.bbox.xLeft(), Math.min(last.bbox.yTop(), current.bbox.yTop()), last.bbox.xRight, last.bbox.yBottom, last.bbox.confidence);
             } else {
                 merged.add(current);
             }
@@ -130,15 +125,20 @@ public class HocrTolerantParser {
 
         // Sort words left-to-right within each merged line
         for (LogicalLine line : merged) {
-            line.words.sort(Comparator.comparingInt(w -> w.xLeft));
+            line.words.sort(Comparator.comparingInt(w -> w.bbox.xLeft));
         }
 
         return merged;
     }
 
     private static boolean isSectionHeader(LogicalLine line) {
+        if (line.lineType == LineType.SECTION) return true;
         String text = wordsToString(line).trim();
-        return SectionDetector.isSectionHeader(text);
+        boolean isHeader = SectionDetector.isSectionHeader(text) && line.lineType == LineType.UNCLASSIFIED;
+        if (isHeader) {
+            line.lineType = LineType.SECTION;
+        }
+        return isHeader;
     }
 
     // ── Step 3 : render ─────────────────────────────────────────────────────────
@@ -196,10 +196,11 @@ public class HocrTolerantParser {
                 }
 
                 // Check whether a lyric line follows the chord group
-                boolean hasLyricBelow = i + 1 < lines.size()
-                        && !isChordLine(lines.get(i + 1))
-                        && !isStrummingLine(lines.get(i + 1))
-                        && !isSectionHeader(lines.get(i + 1));
+                LogicalLine nextLine = lines.get(i + 1);
+                boolean hasLyricBelow = nextLine != null
+                        && !isChordLine(nextLine)
+                        && !isStrummingLine(nextLine)
+                        && !isSectionHeader(nextLine);
 
                 if (hasLyricBelow) {
                     LogicalLine combined = mergeChordLines(chordGroup);
@@ -241,15 +242,10 @@ public class HocrTolerantParser {
                 continue;
             }
 
-            String normalized = normalizeChordToken(w.text);
-            if (CHORD_PATTERN.matcher(normalized).matches()) {
-                if (!sb.isEmpty()) sb.append(' ');
-                sb.append('[').append(normalized).append(']');
+            if (BRACKETED_CHORD_PATTERN.matcher(w.text).matches()) {
+                sb.append(w.text);
             } else {
-                sb.append('[').append(normalized).append("  ⚠ low confidence]");
-                // Invalid token — log and drop
-                logger.info("[renderStandaloneChordLine] dropped invalid token: '{}' → '{}'",
-                        w.text, normalized);
+                sb.append(w.text.replaceAll("\\|", "[|]"));
             }
         }
 
@@ -265,14 +261,14 @@ public class HocrTolerantParser {
      */
     private static LogicalLine mergeChordLines(List<LogicalLine> chordLines) {
         // Use the yTop of the first (topmost) chord line as the anchor
-        LogicalLine combined = new LogicalLine(chordLines.getFirst().yTop);
+        LogicalLine combined = new LogicalLine(chordLines.getFirst().bbox, LineType.CHORD);
         for (LogicalLine cl : chordLines) {
             combined.words.addAll(cl.words);
         }
         // Sort all words left-to-right so mergeChordIntoLyric() sees them
         // in the correct horizontal order regardless of which ocr_line they
         // came from
-        combined.words.sort(Comparator.comparingInt(w -> w.xLeft));
+        combined.words.sort(Comparator.comparingInt(w -> w.bbox.xLeft));
         return combined;
     }
 
@@ -289,7 +285,7 @@ public class HocrTolerantParser {
     private static String findOverride(LogicalLine line, Map<Integer, String> overrides) {
         if (overrides.isEmpty()) return null;
         for (WordEntry w : line.words) {
-            String found = overrides.get(w.yTop);
+            String found = overrides.get(w.bbox.yTop);
             if (found != null) return found;
         }
         return null;
@@ -310,16 +306,19 @@ public class HocrTolerantParser {
      * PATH C — multi-token with high slash-character density (≥ 40%).
      */
     private static boolean isStrummingLine(LogicalLine line) {
+        if (line.lineType == LineType.STRUM) return true;
         if (line.words.isEmpty()) return false;
-
+        if (isSectionHeader(line) || isChordLine(line)) return false;
         // PATH A — single collapsed token
         if (line.words.size() == 1) {
-            return isSingleTokenStrumming(line.words.getFirst().text);
+            boolean singleTokenStrumming = isSingleTokenStrumming(line.words.getFirst().text);
+            line.lineType = LineType.STRUM;
+            return singleTokenStrumming;
         }
 
         // PATH B — multi-token with recognisable slash/pipe tokens
         long chordCount = line.words.stream()
-                .filter(w -> CHORD_PATTERN.matcher(normalizeChordToken(w.text)).matches())
+                .filter(w -> BRACKETED_CHORD_PATTERN.matcher(w.text).matches())
                 .count();
         long slashCount = line.words.stream()
                 .filter(w -> w.text.matches("[/\\\\]+"))
@@ -328,20 +327,22 @@ public class HocrTolerantParser {
                 .filter(w -> w.text.matches("[|lLiI1]{1,2}"))
                 .count();
 
-        if (chordCount >= 1 && (slashCount >= 3 || (pipeCount >= 1 && slashCount >= 1))) {
-            return true;
+        boolean isStrumming = chordCount >= 1 && (slashCount >= 3 && (pipeCount >= 3));
+        if (isStrumming) {
+            line.lineType = LineType.STRUM;
         }
+        return isStrumming;
 
         // PATH C — high slash-char density
-        String allText = line.words.stream().map(w -> w.text).reduce("", String::concat);
-        long slashLike = allText.chars()
-                .filter(c -> "/1lLIT|[]{}\\".indexOf(c) >= 0)
-                .count();
-        boolean hasChordRoot = allText.chars().anyMatch(c -> "ABCDEFG".indexOf(c) >= 0);
-
-        return hasChordRoot
-                && allText.length() >= 5
-                && (double) slashLike / allText.length() >= 0.40;
+//        String allText = line.words.stream().map(w -> w.text).reduce("", String::concat);
+//        long slashLike = allText.chars()
+//                .filter(c -> "/1lLIT|[]{}\\".indexOf(c) >= 0)
+//                .count();
+//        boolean hasChordRoot = allText.chars().anyMatch(c -> "ABCDEFG".indexOf(c) >= 0);
+//
+//        return hasChordRoot
+//                && allText.length() >= 5
+//                && (double) slashLike / allText.length() >= 0.40;
     }
 
     private static boolean isSingleTokenStrumming(String text) {
@@ -378,7 +379,7 @@ public class HocrTolerantParser {
 
         // PATH B — bbox gap-fill
         List<WordEntry> tokens = new ArrayList<>(line.words);
-        tokens.sort(Comparator.comparingInt(w -> w.xLeft));
+        tokens.sort(Comparator.comparingInt(w -> w.bbox.xLeft));
 
         int slashWidth = estimateSlashWidth(tokens);
         StringBuilder sb = new StringBuilder();
@@ -386,14 +387,14 @@ public class HocrTolerantParser {
 
         for (WordEntry token : tokens) {
             if (prev != null) {
-                int gap = token.xLeft - prev.xRight;
+                int gap = token.bbox.xLeft - prev.bbox.xRight;
                 if (gap > slashWidth * 1.2 && slashWidth > 0) {
                     int dropped = Math.min((int) Math.round((double) gap / slashWidth), 8);
                     sb.repeat("/ ", Math.max(0, dropped));
                 }
             }
 
-            String normalised = normalizeChordToken(token.text);
+            String normalised = ChordDetector.normalizeChordToken(token.text);
 
             if (CHORD_PATTERN.matcher(normalised).matches()) {
                 sb.append('[').append(normalised).append(']');
@@ -472,7 +473,7 @@ public class HocrTolerantParser {
     private static int estimateSlashWidth(List<WordEntry> tokens) {
         List<Integer> widths = tokens.stream()
                 .filter(w -> w.text.matches("[|/lLiI1\\\\]"))
-                .map(w -> w.xRight - w.xLeft)
+                .map(w -> w.bbox.xRight - w.bbox.xLeft)
                 .filter(w -> w > 0)
                 .sorted()
                 .toList();
@@ -487,15 +488,7 @@ public class HocrTolerantParser {
     }
 
     // When flushing chords before/after lyric words, only bracket valid chords
-    private static String safeChordBracket(String token) {
-        String normalized = normalizeChordToken(token);
-        if (CHORD_PATTERN.matcher(normalized).matches()) {
-            return "[" + normalized + "]";
-        }
-        // Not a valid chord — emit as plain text rather than [Gsusd4d]
-        logger.info("[safeChordBracket] rejected invalid chord token: '{}'", token);
-        return normalized;
-    }
+
 
     private static String mergeChordIntoLyric(LogicalLine chordLine, LogicalLine lyricLine) {
         List<WordEntry> chords = new ArrayList<>(chordLine.words);
@@ -505,13 +498,13 @@ public class HocrTolerantParser {
         int ci = 0;
 
         for (WordEntry word : lyrics) {
-            while (ci < chords.size() && chords.get(ci).xLeft < word.xLeft) {
-                sb.append(safeChordBracket(normalizeChordToken(chords.get(ci).text)));
+            while (ci < chords.size() && chords.get(ci).bbox.xLeft < word.bbox.xLeft) {
+                sb.append(chords.get(ci).text);
                 ci++;
             }
 
             List<WordEntry> inWord = new ArrayList<>();
-            while (ci < chords.size() && chords.get(ci).xLeft <= word.xRight) {
+            while (ci < chords.size() && chords.get(ci).bbox.xLeft <= word.bbox.xRight) {
                 inWord.add(chords.get(ci++));
             }
 
@@ -519,20 +512,20 @@ public class HocrTolerantParser {
                 sb.append(patchWordText(word.text));
             } else {
                 String text = patchWordText(word.text);
-                int pixelWidth = word.xRight - word.xLeft;
+                int pixelWidth = word.bbox.xRight - word.bbox.xLeft;
                 int charCursor = 0;
 
                 for (WordEntry chord : inWord) {
                     int insertAt;
-                    if (pixelWidth <= 0 || chord.xLeft <= word.xLeft) {
+                    if (pixelWidth <= 0 || chord.bbox.xLeft <= word.bbox.xLeft) {
                         insertAt = 0;
                     } else {
-                        double ratio = (double) (chord.xLeft - word.xLeft) / pixelWidth;
+                        double ratio = (double) (chord.bbox.xLeft - word.bbox.xLeft) / pixelWidth;
                         insertAt = Math.clamp((int) Math.round(ratio * text.length()),
                                 0, text.length());
                     }
                     sb.append(text, charCursor, insertAt);
-                    sb.append(safeChordBracket(chord.text));
+                    sb.append(chord.text);
                     charCursor = insertAt;
                 }
                 sb.append(text, charCursor, text.length());
@@ -541,7 +534,7 @@ public class HocrTolerantParser {
         }
 
         while (ci < chords.size()) {
-            sb.append(safeChordBracket(chords.get(ci).text));
+            sb.append(chords.get(ci).text);
             ci++;
         }
 
@@ -560,90 +553,24 @@ public class HocrTolerantParser {
     }
 
     private static boolean isChordLine(LogicalLine line) {
+        if (line.lineType == LineType.CHORD) return true;
+        if (line.lineType != LineType.UNCLASSIFIED) return false;
         long total = line.words.stream()
                 .filter(w -> !isRepeatAnnotation(w.text))
                 .count();
         long chordCount = line.words.stream()
                 .filter(w -> !isRepeatAnnotation(w.text))
-                .filter(w -> CHORD_PATTERN.matcher(normalizeChordToken(w.text)).matches())
+                .filter(w -> BRACKETED_CHORD_PATTERN.matcher(w.text).matches())
                 .count();
-        return chordCount > 0 && chordCount >= (total + 1) / 2;
+        boolean detectedChordLine = chordCount > 0 && chordCount >= (total + 1) / 2;
+        if (detectedChordLine) line.lineType = LineType.CHORD;
+
+        return detectedChordLine;
     }
 
     // ── Token normalisation ──────────────────────────────────────────────────────
 
-    private static final Map<String, String> OCR_CORRECTIONS;
-
-    static {
-        OCR_CORRECTIONS = new LinkedHashMap<>();
-// Superscript digit normalization
-        OCR_CORRECTIONS.put("²", "2");
-        OCR_CORRECTIONS.put("³", "3");
-        OCR_CORRECTIONS.put("⁴", "4");
-        OCR_CORRECTIONS.put("⁵", "5");
-        OCR_CORRECTIONS.put("⁶", "6");
-        OCR_CORRECTIONS.put("⁷", "7");
-        OCR_CORRECTIONS.put("⁸", "8");
-        OCR_CORRECTIONS.put("⁹", "9");
-
-// Superscript letter normalization for chord quality suffixes.
-// Unicode has superscript forms for some letters but not all —
-// where no Unicode superscript exists, OCR typically outputs the
-// base character already, so no correction is needed for those.
-        OCR_CORRECTIONS.put("ᵃ", "a");  // add   → Cadd9
-        OCR_CORRECTIONS.put("ᵈ", "d");  // dim, add
-        OCR_CORRECTIONS.put("ⁱ", "i");  // dim, min
-        OCR_CORRECTIONS.put("ᵐ", "m");  // maj, min, m7
-        OCR_CORRECTIONS.put("ⁿ", "n");  // min, dim
-        OCR_CORRECTIONS.put("ᵒ", "o");  // dim (diminished °)
-        OCR_CORRECTIONS.put("ˢ", "s");  // sus
-        OCR_CORRECTIONS.put("ᵗ", "t");  // alt
-        OCR_CORRECTIONS.put("ᵘ", "u");  // sus, aug, dim
-        OCR_CORRECTIONS.put("ᵍ", "g");  // aug
-        OCR_CORRECTIONS.put("ʲ", "j");  // maj
-        OCR_CORRECTIONS.put("ʳ", "r");  // aug (augmented)
-
-// Common superscript symbols used as chord quality shorthand
-        OCR_CORRECTIONS.put("°", "dim"); // ° → dim  (e.g. B° → Bdim)
-        OCR_CORRECTIONS.put("ø", "m7b5");// ø → m7b5 (half-diminished)
-        OCR_CORRECTIONS.put("△", "maj"); // △ → maj  (jazz notation)
-        OCR_CORRECTIONS.put("Δ", "maj"); // Δ → maj  (alternate triangle)
-
-// Superscript plus/minus occasionally used in jazz charts
-        OCR_CORRECTIONS.put("⁺", "aug"); // ⁺ → aug
-        OCR_CORRECTIONS.put("⁻", "b");   // ⁻ → flat (e.g. b5, b9)
-    };
-
-    /**
-     * FIX 2: Ghosting removal is now precise — only strips second char when it is
-     * the lowercase echo of the root (e.g. "Cc7" → 'c' == toLowerCase('C') → "C7").
-     * Previous logic stripped ANY lowercase non-m/b second char, which corrupted
-     * legitimate quality suffixes: "Dsus4" → 's' != 'm'/'b' → wrongly stripped to "Dus4".
-     * Now: "Dsus4" → 's' != toLowerCase('D')='d' → kept → "Dsus4" ✓
-     * "Cc7"   → 'c' == toLowerCase('C')='c' → stripped → "C7" ✓
-     * "Gg"    → 'g' == toLowerCase('G')='g' → stripped → "G" ✓
-     */
-    public static String normalizeChordToken(String raw) {
-        String s = raw;
-        for (Map.Entry<String, String> e : OCR_CORRECTIONS.entrySet()) {
-            s = s.replace(e.getKey(), e.getValue());
-        }
-        if (!s.isEmpty() && Character.isLowerCase(s.charAt(0))) {
-            s = Character.toUpperCase(s.charAt(0)) + s.substring(1);
-        }
-        // Only remove second char if it's a true OCR ghost (lowercase echo of root)
-        if (s.length() >= 2) {
-            char first = s.charAt(0);
-            char second = s.charAt(1);
-            if (Character.isLowerCase(second)
-                    && second == Character.toLowerCase(first)) {
-                s = first + s.substring(2);
-            }
-        }
-        return s;
-    }
-
-    // ── Rendering helpers ────────────────────────────────────────────────────────
+  // ── Rendering helpers ────────────────────────────────────────────────────────
 
     private static String wordsToString(LogicalLine line) {
         StringBuilder sb = new StringBuilder();
@@ -683,15 +610,51 @@ public class HocrTolerantParser {
 
     // ── Inner data classes ───────────────────────────────────────────────────────
 
-    private record WordEntry(String text, int xLeft, int yTop, int xRight, int yBottom, int wconf) {
+    public record WordEntry(String text, Bbox bbox) {
     }
 
-    private static class LogicalLine {
-        int yTop;
-        final List<WordEntry> words = new ArrayList<>();
+    public enum LineType {
+        SECTION,
+        CHORD,
+        STRUM,
+        LYRIC,
+        CHORD_MERGED,
+        UNCLASSIFIED
+    }
 
-        LogicalLine(int yTop) {
-            this.yTop = yTop;
+    public static class LogicalLine {
+        LineType lineType;
+        Bbox bbox;
+        private final List<WordEntry> words = new ArrayList<>();
+
+        LogicalLine(Bbox bbox, LineType lineType) {
+            this.bbox = bbox; this.lineType = lineType;
+        }
+        public void clear() {
+            words.clear();
+        }
+
+        public List<WordEntry> words() {
+            return words;
+        }
+
+        public void bracketChords() {
+            List<WordEntry> newChords = new ArrayList<>();
+            for (WordEntry word : words()) {
+                newChords.add(new WordEntry(ChordDetector.safeChordBracket(word.text),  word.bbox));
+            }
+            clear();
+            words().addAll(newChords);
+            lineType = LineType.CHORD;
+        }
+
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("%s", bbox.toString()));
+            for (WordEntry word : words) {
+                sb.append(" ").append(word.toString());
+            }
+            return sb.toString();
         }
     }
 }

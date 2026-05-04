@@ -43,10 +43,6 @@ java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(25))
         vendor = JvmVendorSpec.matching("BellSoft")
-
-//        vendor.set(JvmVendorSpec.AZUL)                 // Azul Zulu; auto-provisioned via foojay
-        // Add this line to request the version that includes JavaFX
-//        implementation.set(JvmImplementation.VENDOR_SPECIFIC)
     }
 }
 
@@ -67,6 +63,7 @@ dependencies {
     val logbackVersion = "1.5.32"
     val julslf4jVersion = "2.0.17"
     val javadiffVersion = "4.12"
+    val commonstextVersion = "1.15.0"
 
     // ── JavaFX ────────────────────────────────────────────────────────────────
     implementation("org.openjfx:javafx-controls:$javafxVersion")
@@ -90,6 +87,8 @@ dependencies {
     // ── Leptonica ─────────────────────────────────────────────────────────────
     implementation("org.bytedeco:leptonica:$leptonicaVersion-$javacppVersion")
     runtimeOnly("org.bytedeco:leptonica:$leptonicaVersion-$javacppVersion:$currentNativeClassifier")
+
+    implementation("org.apache.commons:commons-text:$commonstextVersion")
 
     // ── OpenCV via JavaCV (version driven by javacv:1.5.13 → 4.13.0) ─────────
     implementation("org.bytedeco:javacv:$javacvVersion") {
