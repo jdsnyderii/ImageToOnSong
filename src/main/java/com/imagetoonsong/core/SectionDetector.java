@@ -11,7 +11,6 @@ public class SectionDetector {
 
     static boolean isSectionHeader(String line) {
         if (line.startsWith("[") && line.endsWith("]")) return true;
-
-        return line.matches(SECTION_DETECTOR);
+        return detectSectionCaseInsensitive(line);
     }
 }

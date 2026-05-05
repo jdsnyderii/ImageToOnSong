@@ -12,8 +12,8 @@ public class OnSongBuilder {
     private static final Logger logger = LoggerFactory.getLogger(
             MethodHandles.lookup().lookupClass());
 
-    public String buildOnSong(String rawOcrText, String title, String artist, boolean emptyTextBox) {
-        logger.info("rawOCRText: {}}", rawOcrText);
+    public String buildOnSong(String processedText, String title, String artist, boolean emptyTextBox) {
+        logger.info("rawOCRText: {}}", processedText);
 
         StringBuilder sb = new StringBuilder();
 
@@ -26,7 +26,7 @@ public class OnSongBuilder {
             sb.append("Time: 4/4").append("\n");
             sb.append("\n");
         }
-        String[] lines = rawOcrText.split("\n");
+        String[] lines = processedText.split("\n");
 
         int lineNumber = 0;
         for (String line : lines) {
@@ -35,14 +35,6 @@ public class OnSongBuilder {
                 sb.append("\n");
                 logger.info("{} : Found empty", lineNumber);
 
-                continue;
-            }
-
-            // Detect possible section headers (Verse 1, Chorus, Bridge, etc.)
-            if (SectionDetector.detectSectionCaseInsensitive(line)) {
-                sb.append("\n");
-                logger.info("{} : Found section {}", lineNumber, line);
-                sb.append(normalizeSection(line)).append("\n");
                 continue;
             }
             if (line.length() == 1) {
@@ -72,75 +64,6 @@ public class OnSongBuilder {
             } else {
                 sb.append(line).append("\n");
             }
-        }
-        return sb.toString();
-    }
-
-    private static String normalizeSection(String raw) {
-        if (raw == null || raw.isBlank()) return raw;
-
-        String stripped = raw.strip();
-
-        int start = 0;
-        int end = stripped.length() - 1;
-
-        // Only strip square brackets — never parentheses.
-        // "(x4)" at the end is valid repeat annotation content, not a wrapper.
-        if (stripped.charAt(0) == '[') start++;
-        if (stripped.charAt(end) == ']') end--;
-
-        if (start > end) return raw;
-
-        String content = stripped.substring(start, end + 1);
-
-        // Strip any residual bracket characters from OCR misreads.
-        // e.g. "Tag]" → "Tag"
-        // Only strip square brackets — parentheses inside content are intentional.
-        content = content.replace("[", "").replace("]", "");
-
-        content = fixOcrDigitsInWords(content);
-        content = toTitleCase(content);
-
-        return content + ":";
-    }
-
-    /**
-     * Replaces digits that are visually similar to letters when they appear
-     * inside an otherwise alphabetic word — e.g. "Ch0rus" → "Chorus".
-     * Digits that are legitimately numeric (e.g. the "1" in "Verse 1") are
-     * left alone because they are surrounded by spaces, not letters.
-     */
-    private static String fixOcrDigitsInWords(String input) {
-        Map<Character, Character> digitToLetter = new LinkedHashMap<>();
-        digitToLetter.put('0', 'o');
-        digitToLetter.put('1', 'l');
-        digitToLetter.put('3', 'e');
-        digitToLetter.put('5', 's');
-        digitToLetter.put('8', 'B');
-
-        StringBuilder sb = new StringBuilder(input);
-        for (int i = 0; i < sb.length(); i++) {
-            char c = sb.charAt(i);
-            if (digitToLetter.containsKey(c)) {
-                boolean prevIsLetter = i > 0 && Character.isLetter(sb.charAt(i - 1));
-                boolean nextIsLetter = i < sb.length() - 1 && Character.isLetter(sb.charAt(i + 1));
-                // Only substitute if sandwiched by letters — genuine numeric tokens are not
-                if (prevIsLetter || nextIsLetter) {
-                    sb.setCharAt(i, digitToLetter.get(c));
-                }
-            }
-        }
-        return sb.toString();
-    }
-
-    private static String toTitleCase(String input) {
-        String[] words = input.split("\\s+");
-        StringBuilder sb = new StringBuilder();
-        for (String word : words) {
-            if (!sb.isEmpty()) sb.append(' ');
-            if (word.isEmpty()) continue;
-            sb.append(Character.toUpperCase(word.charAt(0)));
-            sb.append(word.substring(1).toLowerCase());
         }
         return sb.toString();
     }

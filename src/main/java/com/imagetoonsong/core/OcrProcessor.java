@@ -12,6 +12,7 @@ import org.bytedeco.tesseract.global.tesseract;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.opencv.core.Core;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,10 +24,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static com.imagetoonsong.core.ChordDetector.BRACKETED_CHORD_PATTERN;
 import static com.imagetoonsong.core.ChordDetector.CHORD_PATTERN;
 import static com.imagetoonsong.core.HocrTolerantParser.Bbox;
 import static com.imagetoonsong.core.TessData.tessDirPath;
@@ -146,10 +145,14 @@ public class OcrProcessor {
         LINE_OCR_API.SetVariable("load_unambig_dawg", "0");
         LINE_OCR_API.SetVariable("load_bigram_dawg", "0");
         LINE_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
-        LINE_OCR_API.SetVariable("preserve_interword_spaces", "1");
-        LINE_OCR_API.SetVariable("textord_min_linesize", "0.3");
-        LINE_OCR_API.SetVariable("edges_min_nonhole", "2");
+        LINE_OCR_API.SetVariable("textord_min_linesize", "0.4");
+        LINE_OCR_API.SetVariable("edges_min_nonhole", "12"); // raise from 2
         LINE_OCR_API.SetVariable("textord_noise_sizelimit", "0.01");
+
+        LINE_OCR_API.SetVariable("chop_enable", "0");
+        LINE_OCR_API.SetVariable("wordrec_enable_assoc", "0");
+        LINE_OCR_API.SetVariable("textord_noise_normratio", "3.0");
+        LINE_OCR_API.SetVariable("textord_noise_syfract", "0.2");
 
         FALLBACK_OCR_API = createTessAPI(tesseract.PSM_SINGLE_WORD, OCR_LANGUAGE);
         FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
@@ -245,16 +248,16 @@ public class OcrProcessor {
             Document doc = Jsoup.parse(html);
             printFoundChords(doc, "applyChordReOcrToDocument");
 
-            List<HocrTolerantParser.LogicalLine> lines = HocrTolerantParser.clusterIntoLines(doc);
+            List<LogicalLine> lines = HocrTolerantParser.clusterIntoLines(doc);
             // Mutate document in place — chord words get corrected text,
             // spatial coordinates unchanged, parser sees clean data
-            detectChordLines(lines);
+            detectLineTypes(lines);
             applyChordReOcrToLines(lines, padded, tesseractDpi);
             Map<Integer, String> strummingOverrides = reOcrStrummingLines(doc, padded, tesseractDpi);
             padded.release();
 
             // ── Parse ────────────────────────────────────────────────────────────
-            String result = HocrTolerantParser.parseLogicalLines(lines, strummingOverrides);
+            String result = HocrTolerantParser.buildFormattedOnsong(lines, strummingOverrides);
             printFoundChords(doc, "parseHocrToString");
             logger.info("OCR completed successfully - {} characters returned", result.length());
             return result;
@@ -268,17 +271,13 @@ public class OcrProcessor {
      * Detect and brack lines that have all good chords so we can reduce the rescanning later.
      * @param lines
      */
-    private void detectChordLines(List<HocrTolerantParser.LogicalLine> lines) {
-        for (HocrTolerantParser.LogicalLine line : lines) {
-            line.lineType = HocrTolerantParser.LineType.CHORD;
-            line.words().stream().forEach(word -> {
-                if (!(CHORD_PATTERN.matcher(word.text()).matches() && word.bbox().confidence() >= 50)) {
-                    line.lineType = HocrTolerantParser.LineType.UNCLASSIFIED;
-                }
-            });
-            if (line.lineType == HocrTolerantParser.LineType.CHORD) {
-                line.bracketChords();
-            }
+    private void detectLineTypes(List<LogicalLine> lines) {
+        for (LogicalLine line : lines) {
+            if (line.isChordLine()) { continue;}
+            if (line.isSectionHeader()) { continue;}
+            if (line.isStrummingLine()) { continue;}
+            if (line.isLikelyChord()) { continue;}
+            line.lineType = LogicalLine.LineType.LYRIC;
         }
     }
 
@@ -331,7 +330,7 @@ public class OcrProcessor {
      * preserved from the original — the line geometry hasn't changed,
      * only the word content within it has been corrected.
      */
-    private void replaceLineNode(HocrTolerantParser.LogicalLine originalLine,
+    private void replaceLineNode(LogicalLine originalLine,
                                  Document newDoc,
                                  int cropOriginX,
                                  int cropOriginY) {
@@ -358,10 +357,10 @@ public class OcrProcessor {
             logger.info("Coordinates before {}", newBox);
             Bbox translatedBox = translateBboxInTitle(newBox, cropOriginX, cropOriginY);
             String bracketedText = ChordDetector.safeChordBracket(newText);
-            originalLine.words().add(new HocrTolerantParser.WordEntry(bracketedText, translatedBox));
+            originalLine.words().add(new LogicalLine.WordEntry(bracketedText, translatedBox));
             logger.info("Coordinates after {}", translatedBox);
         }
-        originalLine.lineType = HocrTolerantParser.LineType.CHORD;
+        originalLine.lineType = LogicalLine.LineType.CHORD;
 
         logger.info("[replaceLineNode] replaced {} word(s) in line yTop={}",
                 newWords.size(),
@@ -383,6 +382,7 @@ public class OcrProcessor {
     private String runLineOcr(Mat crop, int dpi) {
         logger.info("Running runLineOcr tesseract with {}");
         try {
+            ImageSource.saveImage(crop, new File("build/lineCrop.png"));
             setTessImageParameters(LINE_OCR_API, crop, dpi);
             BytePointer ptr = LINE_OCR_API.GetHOCRText(0);  // hOCR not plain text
             if (ptr == null) return "";
@@ -395,7 +395,7 @@ public class OcrProcessor {
         }
     }
 
-    public static void saveLinesHtml(List<HocrTolerantParser.LogicalLine> lines, String name) {
+    public static void saveLinesHtml(List<LogicalLine> lines, String name) {
         try {
             // 1. Define the directory and ensure it exists
             Path buildPath = Paths.get("build");
@@ -423,8 +423,8 @@ public class OcrProcessor {
         }
     }
 
-    private void applyChordReOcrToLines(List<HocrTolerantParser.LogicalLine> lines, Mat source, int dpi) {
-        for (HocrTolerantParser.LogicalLine line : lines) {
+    private void applyChordReOcrToLines(List<LogicalLine> lines, Mat source, int dpi) {
+        for (LogicalLine line : lines) {
             if (!looksLikeChordLineNeedingReOcr(line)) {
                 continue;
             }
@@ -472,8 +472,8 @@ public class OcrProcessor {
             // Word bbox is in crop space (relative to lineCrop origin).
             // Crop the word directly from lineCrop using crop-relative coords.
             int x = Math.max(0, wordBox.xLeft() - 2);
-            int y = Math.max(0, wordBox.yTop() - STRUMMING_CROP_VERT_PAD);
-            int w = wordBox.xRight() - wordBox.xLeft() + 4;
+            int y = Math.max(0, wordBox.yTop() );
+            int w = wordBox.xRight() - wordBox.xLeft() + 14;
             int h = Math.min(
                     wordBox.yBottom() - wordBox.yTop() + STRUMMING_CROP_VERT_PAD * 2,
                     lineCrop.rows() - y);
@@ -675,41 +675,16 @@ public class OcrProcessor {
         }
     }
 
-    private static String chordRegex = "[A-G][#b]?(?:m(?!aj)|min|maj|M|aug|dim|sus[24]?|add|ø|°)?(?:[#b]?\\d{1,2})*(?:add\\d{1,2})?(?:/[A-G][#b]?)?";
-    private static String nonChordWordRegex = "\\b(?!" + chordRegex + "(?:\\b|$))\\w+\\b";
-    private static Pattern pattern = Pattern.compile(nonChordWordRegex);
 
-    private static boolean looksLikeLyricWord(String lineText) {
-        return pattern.matcher(lineText).matches();
+    private static boolean looksLikeSectionLine(LogicalLine line) {
+        if (line.lineType != LogicalLine.LineType.UNCLASSIFIED) return false;
+        if (line.words().size() > 1) return false;
+
+        boolean isSectionLine =SectionDetector.detectSectionCaseInsensitive(line.words().getFirst().text());
+        if (isSectionLine) line.lineType = LogicalLine.LineType.SECTION;
+        return isSectionLine;
     }
 
-    private static boolean looksLikeSectionLine(String text) {
-        return SectionDetector.detectSectionCaseInsensitive(text);
-    }
-
-    /**
-     * Returns true if the composite text of an ocr_line looks like a strumming
-     * / bar pattern.
-     * <p>
-     * Covers both cases:
-     * <p>
-     * SINGLE-TOKEN COLLAPSED (Tesseract merged the line into one blob):
-     * e.g. "|G//1/1|DIF#/1111]]"
-     * → has pipe-like chars + slash-like chars + chord root → true
-     * <p>
-     * MULTI-TOKEN WELL-SEPARATED (Tesseract recognized characters individually):
-     * e.g. "G / / / / / | Bm / / / / / |"   (from separate ocrx_word tokens)
-     * → composite text also has pipe + slashes + chord root → true
-     * <p>
-     * Three signals must all be present:
-     * - At least one pipe-like character:  | [ ] { }
-     * - At least three slash-like chars:   / 1 l L
-     * - At least one uppercase chord-root: A B C D E F G
-     * - Composite text length ≥ 5
-     * <p>
-     * This is intentionally identical to the old looksLikeStrummingToken() but
-     * applied to the full composite line text instead of a single word token.
-     */
     private static boolean looksLikeStrummingLine(String lineText) {
         if (lineText == null || lineText.length() < 5) return false;
         boolean hasPipeLike = lineText.chars().anyMatch(c -> "|[]{}I".indexOf(c) >= 4);
@@ -773,41 +748,9 @@ public class OcrProcessor {
     private record MatchedCharacterResults(boolean missingMatches, String ocrChars) {
     }
 
-    private static boolean looksLikeChordLineNeedingReOcr(HocrTolerantParser.LogicalLine line) {
-        if (line.lineType == HocrTolerantParser.LineType.CHORD) return false;
-
-        List<HocrTolerantParser.WordEntry> words = line.words();
-        boolean hasLowConfidence = false;
-        int lowConfidenceChordCount = 0;
-        int lyricWord = 0;
-        boolean shouldSkip = false;
-
-        if (words.isEmpty()) return false;
-        // if we successfully have a complete chord line just skip
-
-        for (HocrTolerantParser.WordEntry word : words) {
-            String text = word.text().trim();
-            if (text.isEmpty()) continue;
-
-            // Token too long to be a chord symbol
-            if (looksLikeStrummingLine(text) || looksLikeSectionLine(text)) {
-                shouldSkip = true;
-                break;
-            }
-
-            if (looksLikeLyricWord(text)) {
-                lyricWord++;
-            }
-            // Check confidence
-            String normalized = ChordDetector.normalizeChordToken(text);
-            if (word.bbox().confidence() < 70 && CHORD_PATTERN.matcher(normalized).matches()) {
-                hasLowConfidence = true;
-                lowConfidenceChordCount++;
-            }
-        }
-
-        if (shouldSkip) return false;
-        return lowConfidenceChordCount >= 1 && lyricWord <= 1;
+    private static boolean looksLikeChordLineNeedingReOcr(LogicalLine line) {
+        if (line.lineType != LogicalLine.LineType.LIKELY_CHORD) return false;
+        return true;
     }
 
     // A box wider than 2× median is almost certainly a multi-glyph chord token
@@ -820,7 +763,7 @@ public class OcrProcessor {
 
         // Pre-process: invert so text is white (required for findContours)
         threshold(gray, thresh, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
-
+        ImageSource.saveImage(thresh, new File("build/thresholdImage.png"));
         // Find bounding boxes of all character blobs
         findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
@@ -855,7 +798,7 @@ public class OcrProcessor {
 //        for (Rect rect : boundingBoxes) {
 //            rectangle(debug,
 //                    new Point(rect.x(), rect.y()),
-//                    new Point(rect.x() + rect.width(), rect.y() + rect.height()),
+//                    new Point(rect.x() + rect.width() , rect.y() + rect.height()),
 //                    blue, 1, LINE_8, 0);
 //        }
 //
@@ -1203,14 +1146,35 @@ public class OcrProcessor {
         Mat gray = new Mat();
         Mat upscaled = new Mat();
         Mat binary = new Mat();
+        Mat sharpened = new Mat();  // ← new
         Mat normalized = new Mat();
 
         cvtColor(src, gray, COLOR_BGR2GRAY);
         resize(gray, upscaled,
                 new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
                 .9f, .9f, INTER_LANCZOS4);
+        Mat blurred = new Mat();
+//        GaussianBlur(upscaled, blurred, new Size(0, 0), 3.2);
+//        addWeighted(upscaled, 1.5, blurred, -0.5, 0, sharpened);
+        blurred.release();
+
         normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
         threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
+
+        /*
+
+
+    cvtColor(src, gray, COLOR_BGR2GRAY);
+    resize(gray, upscaled,
+            new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
+            0, 0, INTER_LANCZOS4);  // fx/fy ignored when Size is explicit anyway
+
+    // Unsharp mask — pushes anti-aliased edge pixels toward black or white
+    // before Otsu has to make a decision about them
+
+    normalize(sharpened, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
+    threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
+         */
 
         // ── Dark-background detection and inversion ───────────────────────────
         //
@@ -1238,6 +1202,7 @@ public class OcrProcessor {
         gray.release();
         upscaled.release();
         normalized.release();
+        sharpened.release();
         return binary;
     }
 

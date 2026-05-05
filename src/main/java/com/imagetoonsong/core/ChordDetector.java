@@ -36,13 +36,14 @@ public class ChordDetector {
      * Rejects: God  Calling  daughters  the  and  |  /  l  1  G/  /D
      */
     public static final Pattern CHORD_PATTERN = Pattern.compile(
-            "^[A-G]"                                    // root — uppercase only
-          + "([#b])?"                                   // optional accidental
-          + "(m(?!aj)|min|maj|M|aug|dim|sus[24]?|add|ø|°)?"  // optional quality
-          + "(\\d{1,2})?"                               // optional numeric extension (7, 9, 11, 13…)
-          + "(add\\d{1,2})?"                            // optional add-tone (add9, add11)
-          + "(/[A-G][#b]?)?"                            // optional slash bass note — full note required
-          + "$"
+    "^[A-G]"                                      // root
+            + "([#b])?"                                   // optional accidental
+            + "(m(?!aj)|min|maj|M|aug|dim|sus[24]?|add|ø|°)?"  // optional quality (pre-number)
+            + "(\\d{1,2})?"                               // optional numeric extension
+            + "(sus[24]?)?"                               // ← ADD THIS: sus after number (C7sus4, C9sus2)
+            + "(add\\d{1,2})?"                            // optional add-tone
+            + "(/[A-G][#b]?)?"                            // optional slash bass
+            + "$"
     );
 
     public static final Pattern BRACKETED_CHORD_PATTERN = Pattern.compile(
@@ -52,10 +53,18 @@ public class ChordDetector {
                     // Removed 'add' from here to avoid "eating" it before the dedicated add group
                     + "(m(?!aj)|min|maj|M|aug|dim|sus[24]?|ø|°|\\+)?"
                     + "([#b]?\\d{1,2})*"
+                    + "(sus[24]?)?"                               // ← ADD THIS: sus after number (C7sus4, C9sus2)
                     + "(add\\d{1,2})?"
-                    + "((/[A-G][#b]?))?"
+                    + "(/[A-G][#b]?)?"
                     + "\\]$"
     );
+//
+//    private static final String CHORD_REGEX = "[A-G][#b]?(?:m(?!aj)|min|maj|M|aug|dim|sus[24]?|add|ø|°)?(?:[#b]?\\d{1,2})*(?:add\\d{1,2})?(?:/[A-G][#b]?)?";
+//
+//    // Matches a "word" including internal apostrophes and hyphens
+//    private static final String LYRIC_WORD = "[\\w]+(?:['-][\\w]+)*";
+//    private static final String NON_CHORD_WORD_REGEX = "\\b(?!" + CHORD_REGEX + "(?:\\b|$))" + LYRIC_WORD;
+//    public static final Pattern NON_CHORD_WORD_PATTERN = Pattern.compile(NON_CHORD_WORD_REGEX);
 
     /**
      * Inline scanner — use with .replaceAll() on a full line of text.
@@ -73,6 +82,10 @@ public class ChordDetector {
           + "(?![\\]\\w])"                             // not followed by ']' or word char
     );
 
+
+    private static final Pattern BAD_CHORD_CHARS =
+            Pattern.compile("(?<![\\[\\w])[A-Z]{2,}|[|](?![^\\[]*\\])");
+
     /**
      * Converts a raw OCR line that looks like a chord line into bracketed format.
      * Example: "C   Am7   F   G/B"  →  "[C] [Am7] [F] [G/B]"
@@ -82,9 +95,12 @@ public class ChordDetector {
     public static String convertToBracketed(String line) {
         if (line == null || line.isEmpty()) return line;
         String firstPass = CHORD_INLINE.matcher(line).replaceAll(match -> "[" + match.group() + "]");
+        firstPass = BAD_CHORD_CHARS.matcher(firstPass).replaceAll(m -> "[" + m.group() + " ⚠️ ]");
+
         while (firstPass.contains("]/")) {
             firstPass = firstPass.replace("]/", "][/]");
         }
+
         return firstPass;
     }
 
@@ -222,15 +238,7 @@ public class ChordDetector {
         if (!s.isEmpty() && Character.isLowerCase(s.charAt(0))) {
             s = Character.toUpperCase(s.charAt(0)) + s.substring(1);
         }
-        // Only remove second char if it's a true OCR ghost (lowercase echo of root)
-        if (s.length() >= 2) {
-            char first = s.charAt(0);
-            char second = s.charAt(1);
-            if (Character.isLowerCase(second)
-                    && second == Character.toLowerCase(first)) {
-                s = first + s.substring(2);
-            }
-        }
+
         return s;
     }
 
