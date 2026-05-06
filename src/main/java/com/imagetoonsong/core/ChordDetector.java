@@ -104,23 +104,25 @@ public class ChordDetector {
         return firstPass;
     }
 
-    /**
-     * Uppercases the first character of a token to mirror what
-     * HocrTolerantParser.normalizeChordToken() does before chord matching.
-     * Needed because CHORD_PATTERN no longer uses CASE_INSENSITIVE on the root.
-     */
-    private static String normalizeForDetection(String token) {
-        if (token == null || token.isEmpty()) return token;
-        return Character.toUpperCase(token.charAt(0)) + token.substring(1);
-    }
-
     public static String safeChordBracket(String token) {
         String normalized = ChordDetector.normalizeChordToken(token);
+
+        // Fast path — already a valid chord
         if (CHORD_PATTERN.matcher(normalized).matches()) {
             return "[" + normalized + "]";
-        } else {
-            return "[" + normalized + " ⚠️ ]";
         }
+
+        // Attempt Levenshtein correction before giving up.
+        // Handles single-char OCR misses like Fmai7 → Fmaj7 (j/i confusion),
+        // Dsus4 → Dsus4 (no change needed), Gm7 → Gm7 etc.
+        String corrected = correctToChord(normalized);
+        if (CHORD_PATTERN.matcher(corrected).matches()) {
+            logger.info("[safeChordBracket] corrected '{}' → '{}'", normalized, corrected);
+            return "[" + corrected + "]";
+        }
+
+        // Genuinely unrecognisable — flag it for human review
+        return "[" + normalized + " ⚠️ ]";
     }
 
     /**

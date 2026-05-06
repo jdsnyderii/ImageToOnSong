@@ -43,7 +43,7 @@ public class OnSongBuilder {
             sb.append(line).append("\n");
         }
 
-        return flagIncompleteLines(sb.toString());
+        return sb.toString();
     }
 
     private static String flagIncompleteLines(String onSongText) {

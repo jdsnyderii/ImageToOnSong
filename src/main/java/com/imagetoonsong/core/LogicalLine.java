@@ -63,7 +63,8 @@ public class LogicalLine {
      * PATH C — multi-token with high slash-character density (≥ 40%).
      */
     public boolean isStrummingLine() {
-        if (lineType == LogicalLine.LineType.STRUM) return true;
+        if (lineType == LineType.STRUM) return true;
+        if (lineType != LineType.UNCLASSIFIED) return false;
         if (words().isEmpty()) return false;
         if (isSectionHeader() || isChordLine()) return false;
         // PATH A — single collapsed token
@@ -168,6 +169,7 @@ public class LogicalLine {
 
         return content + ":";
     }
+
     public boolean isLyricLine() {
         return lineType == LineType.LYRIC;
     }

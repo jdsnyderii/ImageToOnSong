@@ -12,7 +12,6 @@ import org.bytedeco.tesseract.global.tesseract;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
-import org.opencv.core.Core;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -126,7 +125,14 @@ public class OcrProcessor {
         CHORD_OCR_API.SetVariable("load_bigram_dawg", "0");
         CHORD_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
         CHORD_OCR_API.SetVariable("tessedit_minimal_rejection", "0");
-        CHORD_OCR_API.SetVariable("preserve_interword_spaces", "1");
+// In the constructor, after CHORD_OCR_API setup:
+        CHORD_OCR_API.SetVariable("tessedit_ocr_engine_mode",
+                String.valueOf(tesseract.OEM_TESSERACT_ONLY));   // PSM_SINGLE_CHAR needs legacy engine
+        CHORD_OCR_API.SetVariable("chop_enable", "0");
+        CHORD_OCR_API.SetVariable("wordrec_enable_assoc", "0");
+        CHORD_OCR_API.SetVariable("wordrec_enable_assoc", "0");
+        CHORD_OCR_API.SetVariable("textord_noise_normratio", "3.0");
+        CHORD_OCR_API.SetVariable("textord_noise_syfract", "0.2");
 
         PAGE_OCR_API = createTessAPI(tesseract.PSM_SPARSE_TEXT, OCR_LANGUAGE);
         PAGE_OCR_API.SetVariable(TESS_CHAR_WHITELIST, PAGE_WHITELIST);
@@ -145,14 +151,12 @@ public class OcrProcessor {
         LINE_OCR_API.SetVariable("load_unambig_dawg", "0");
         LINE_OCR_API.SetVariable("load_bigram_dawg", "0");
         LINE_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
-        LINE_OCR_API.SetVariable("textord_min_linesize", "0.4");
-        LINE_OCR_API.SetVariable("edges_min_nonhole", "12"); // raise from 2
-        LINE_OCR_API.SetVariable("textord_noise_sizelimit", "0.01");
-
-        LINE_OCR_API.SetVariable("chop_enable", "0");
-        LINE_OCR_API.SetVariable("wordrec_enable_assoc", "0");
-        LINE_OCR_API.SetVariable("textord_noise_normratio", "3.0");
-        LINE_OCR_API.SetVariable("textord_noise_syfract", "0.2");
+        LINE_OCR_API.SetVariable("chop_enable", "1");
+        LINE_OCR_API.SetVariable("wordrec_enable_assoc", "1");
+        LINE_OCR_API.SetVariable("edges_min_nonhole", "12");
+        LINE_OCR_API.SetVariable("textord_min_linesize", "1.1");
+        LINE_OCR_API.SetVariable("tessedit_enable_bigram_correction", "0");
+        LINE_OCR_API.SetVariable("textord_max_noise_size", "2");
 
         FALLBACK_OCR_API = createTessAPI(tesseract.PSM_SINGLE_WORD, OCR_LANGUAGE);
         FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
@@ -169,8 +173,10 @@ public class OcrProcessor {
         INDIVIDUAL_OCR_API.SetVariable("load_bigram_dawg", "0");
         INDIVIDUAL_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
         INDIVIDUAL_OCR_API.SetVariable("tessedit_minimal_rejection", "0");
-        INDIVIDUAL_OCR_API.SetVariable("preserve_interword_spaces", "1");
-
+        INDIVIDUAL_OCR_API.SetVariable("tessedit_ocr_engine_mode",
+                String.valueOf(tesseract.OEM_TESSERACT_ONLY));   // same reason
+        INDIVIDUAL_OCR_API.SetVariable("chop_enable", "0");
+        INDIVIDUAL_OCR_API.SetVariable("wordrec_enable_assoc", "0");
     }
 
     public void shutdown() {
@@ -246,19 +252,20 @@ public class OcrProcessor {
 
             // ── Re-OCR pass for strumming lines ──────────────────────────────────
             Document doc = Jsoup.parse(html);
-            printFoundChords(doc, "applyChordReOcrToDocument");
-
             List<LogicalLine> lines = HocrTolerantParser.clusterIntoLines(doc);
+//            saveLinesHtml(lines, "01_after_cluster");
+
             // Mutate document in place — chord words get corrected text,
             // spatial coordinates unchanged, parser sees clean data
             detectLineTypes(lines);
+//            saveLinesHtml(lines, "02_after_detectLineTypes");
             applyChordReOcrToLines(lines, padded, tesseractDpi);
+//            saveLinesHtml(lines, "03_after_chordReOcr");
             Map<Integer, String> strummingOverrides = reOcrStrummingLines(doc, padded, tesseractDpi);
             padded.release();
 
             // ── Parse ────────────────────────────────────────────────────────────
             String result = HocrTolerantParser.buildFormattedOnsong(lines, strummingOverrides);
-            printFoundChords(doc, "parseHocrToString");
             logger.info("OCR completed successfully - {} characters returned", result.length());
             return result;
         } finally {
@@ -278,18 +285,6 @@ public class OcrProcessor {
             if (line.isStrummingLine()) { continue;}
             if (line.isLikelyChord()) { continue;}
             line.lineType = LogicalLine.LineType.LYRIC;
-        }
-    }
-
-    private void printFoundChords(Document doc, String title) {
-        logger.info("Found chords for title {}", title);
-        for (Element lineSpan : doc.select(SPAN_OCR_LINE)) {
-            StringBuffer sb = new StringBuffer();
-            for (Element chord : lineSpan.select(SPAN_OCRX_WORD)) {
-                if (chord.text().startsWith("[")) sb.append(chord.text());
-            }
-            if (sb.length() > 0)
-                logger.info("Chord Line Contents {}", sb.toString());
         }
     }
 
@@ -395,32 +390,138 @@ public class OcrProcessor {
         }
     }
 
-    public static void saveLinesHtml(List<LogicalLine> lines, String name) {
+    /**
+     * Saves a human-readable HTML debug view of the logical lines at the current
+     * pipeline stage.  Call this after any mutation step to see what changed.
+     *
+     * Output: build/<name>_<timestamp>.html
+     *
+     * Colour coding:
+     *   CHORD          blue
+     *   LYRIC          green
+     *   SECTION        orange
+     *   STRUMMING      purple
+     *   LIKELY_CHORD   teal
+     *   UNCLASSIFIED   grey
+     */
+    public static void saveLinesHtml(List<LogicalLine> lines, String stageName) {
         try {
-            // 1. Define the directory and ensure it exists
-            Path buildPath = Paths.get("build");
-            if (Files.notExists(buildPath)) {
-                Files.createDirectories(buildPath);
+            Path buildDir = Paths.get("build");
+            Files.createDirectories(buildDir);
+
+            String filename = stageName + "_" + System.currentTimeMillis() + ".html";
+            Path outputPath = buildDir.resolve(filename);
+
+            StringBuilder html = new StringBuilder(4096);
+            html.append("""
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8">
+                  <title>LogicalLines — """).append(stageName).append("""
+                </title>
+                  <style>
+                    body  { font-family: monospace; font-size: 14px;
+                            background: #1e1e1e; color: #d4d4d4; padding: 16px; }
+                    h1    { color: #9cdcfe; margin-bottom: 4px; }
+                    h2    { color: #888; font-size: 12px; margin: 0 0 16px; }
+                    table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
+                    th    { background: #333; color: #9cdcfe; padding: 6px 10px;
+                            text-align: left; font-size: 12px; }
+                    td    { padding: 4px 10px; border-bottom: 1px solid #333;
+                            vertical-align: top; }
+                    tr:hover td { background: #2a2a2a; }
+                    .badge { display:inline-block; padding:2px 7px; border-radius:4px;
+                             font-size:11px; font-weight:bold; }
+                    .CHORD         { background:#0e4a7e; color:#9cdcfe; }
+                    .LYRIC         { background:#1a4a1a; color:#6ac26a; }
+                    .SECTION       { background:#5a3800; color:#ffcc66; }
+                    .STRUMMING     { background:#3a1a5a; color:#c586c0; }
+                    .LIKELY_CHORD  { background:#004a4a; color:#4ec9b0; }
+                    .UNCLASSIFIED  { background:#3a3a3a; color:#aaa; }
+                    .word-chip { display:inline-block; margin:2px 4px;
+                                 padding:2px 6px; background:#2d2d2d;
+                                 border:1px solid #555; border-radius:3px; }
+                    .conf-high { border-color:#6ac26a; }
+                    .conf-mid  { border-color:#ffcc66; }
+                    .conf-low  { border-color:#f44747; }
+                    .bbox { font-size:10px; color:#666; }
+                  </style>
+                </head>
+                <body>
+                """);
+
+            html.append("<h1>Stage: ").append(escapeHtml(stageName)).append("</h1>\n");
+            html.append("<h2>").append(lines.size()).append(" logical lines</h2>\n");
+            html.append("<table>\n");
+            html.append("<tr><th>#</th><th>Type</th><th>BBox</th>")
+                    .append("<th>Words</th><th>Raw text</th></tr>\n");
+
+            int idx = 0;
+            for (LogicalLine line : lines) {
+                String typeName = line.lineType == null ? "UNCLASSIFIED" : line.lineType.name();
+
+                html.append("<tr>");
+
+                // Index
+                html.append("<td>").append(idx++).append("</td>");
+
+                // Type badge
+                html.append("<td><span class=\"badge ").append(typeName).append("\">")
+                        .append(typeName).append("</span></td>");
+
+                // Line bbox
+                if (line.bbox != null) {
+                    html.append("<td class=\"bbox\">")
+                            .append(line.bbox.xLeft()).append(',')
+                            .append(line.bbox.yTop()).append(" → ")
+                            .append(line.bbox.xRight()).append(',')
+                            .append(line.bbox.yBottom())
+                            .append("</td>");
+                } else {
+                    html.append("<td class=\"bbox\">—</td>");
+                }
+
+                // Word chips with per-word confidence colouring
+                html.append("<td>");
+                for (LogicalLine.WordEntry word : line.words()) {
+                    int conf = word.bbox() != null ? word.bbox().confidence() : -1;
+                    String confClass = conf >= 80 ? "conf-high" : conf >= 50 ? "conf-mid" : "conf-low";
+                    html.append("<span class=\"word-chip ").append(confClass).append("\" title=\"conf=")
+                            .append(conf).append("&#10;");
+                    if (word.bbox() != null) {
+                        html.append(word.bbox().xLeft()).append(',').append(word.bbox().yTop())
+                                .append("→").append(word.bbox().xRight()).append(',').append(word.bbox().yBottom());
+                    }
+                    html.append("\">").append(escapeHtml(word.text())).append("</span>");
+                }
+                html.append("</td>");
+
+                // Full concatenated text (easy to read at a glance)
+                String fullText = line.words().stream()
+                        .map(LogicalLine.WordEntry::text)
+                        .collect(java.util.stream.Collectors.joining(" "));
+                html.append("<td>").append(escapeHtml(fullText)).append("</td>");
+
+                html.append("</tr>\n");
             }
 
-            // 2. Define the file name (using a timestamp or unique ID if necessary)
-            String filename = name + "_" + System.currentTimeMillis() + ".html";
-            Path outputPath = buildPath.resolve(filename);
+            html.append("</table>\n</body>\n</html>\n");
 
-            // 3. Write the doc.html() string to the file
-            lines.forEach(line -> {
-                try {
-                    Files.writeString(outputPath, String.format("Line: %s\n",line.toString()), StandardCharsets.UTF_8);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-
-            logger.info("Successfully saved debug HTML to: {}", outputPath.toAbsolutePath());
+            Files.writeString(outputPath, html.toString(), StandardCharsets.UTF_8);
+            logger.info("[saveLinesHtml] stage='{}' → {}", stageName, outputPath.toAbsolutePath());
 
         } catch (IOException e) {
-            logger.error("Failed to save debug HTML file", e);
+            logger.error("[saveLinesHtml] failed to write debug HTML for stage '{}'", stageName, e);
         }
+    }
+
+    private static String escapeHtml(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 
     private void applyChordReOcrToLines(List<LogicalLine> lines, Mat source, int dpi) {
@@ -445,7 +546,7 @@ public class OcrProcessor {
             String newHocr = runLineOcr(lineCrop, dpi);
             Document newDoc = Jsoup.parse(newHocr);
             logger.info("First pass line OCR {}", newDoc.html());
-            runChordOcr(lineCrop, dpi, newDoc);
+            runChordLineOcr(lineCrop, dpi, newDoc);
             logger.info("Second pass line OCR {}", newDoc.html());
             lineCrop.release();
 
@@ -454,7 +555,7 @@ public class OcrProcessor {
         }
     }
 
-    private void runChordOcr(Mat lineCrop, int dpi, Document newDoc) {
+    private void runChordLineOcr(Mat lineCrop, int dpi, Document newDoc) {
         // We know we have only a single line
         long lineCount = newDoc.select(SPAN_OCR_LINE).stream().count();
         if (lineCount > 0) logger.warn("Chord OCR line is fragmented {} ", lineCount);
@@ -473,7 +574,7 @@ public class OcrProcessor {
             // Crop the word directly from lineCrop using crop-relative coords.
             int x = Math.max(0, wordBox.xLeft() - 2);
             int y = Math.max(0, wordBox.yTop() );
-            int w = wordBox.xRight() - wordBox.xLeft() + 14;
+            int w = wordBox.xRight() - wordBox.xLeft();
             int h = Math.min(
                     wordBox.yBottom() - wordBox.yTop() + STRUMMING_CROP_VERT_PAD * 2,
                     lineCrop.rows() - y);
@@ -483,7 +584,7 @@ public class OcrProcessor {
                 continue;
             }
 
-            Mat wordCrop = new Mat(lineCrop, new Rect(x, y, w, h));
+            Mat wordCrop = new Mat(lineCrop, new Rect(x, y, w + 2, h));
 
 //            ImageSource.saveImage(lineCrop, new File("build/lineCrop.png"));
 //            ImageSource.saveImage(wordCrop, new File("build/wordCrop.png"));
@@ -491,7 +592,7 @@ public class OcrProcessor {
             // Character-by-character OCR on the word crop —
             // same approach as strumming lines, handles superscripts correctly
             MatchedCharacterResults result =
-                    runChordlineCharacterOcr(wordCrop, dpi, CHORD_LINE_WHITELIST);
+                    runChordlineCharacterOcr(wordCrop, dpi);
             wordCrop.release();
 
             // Rejoin individual characters into one token
@@ -537,21 +638,22 @@ public class OcrProcessor {
         logger.info("Tesseract initialized with tessdata {}", tessDirPath);
 
         api.SetPageSegMode(pageSegMode);
-        api.SetVariable("tessedit_ocr_engine_mode", String.valueOf(tesseract.OEM_LSTM_ONLY));
+        api.SetVariable("tessedit_ocr_engine_mode", String.valueOf(tesseract.OEM_TESSERACT_LSTM_COMBINED));
         api.SetVariable("preserve_interword_spaces", "1");
         api.SetVariable("tosp_min_sane_kn_sp", "1.5");
         api.SetVariable("textord_tabfind_find_tables", "0");
         api.SetVariable("tessedit_create_hocr", "1");
         api.SetVariable("load_system_dawg", "0");
         api.SetVariable("load_freq_dawg", "0");
-        api.SetVariable("tessedit_minimal_rejection", "0");
-        api.SetVariable("edges_min_nonhole", "2");
-        api.SetVariable("textord_min_linesize", "0.3");
+        api.SetVariable("tessedit_minimal_rejection", "1");
+        api.SetVariable("edges_min_nonhole", "8");
+        api.SetVariable("textord_min_linesize", "0.4");
         api.SetVariable("textord_noise_rejrows", "0");
         api.SetVariable("textord_noise_sncount", "0");
         api.SetVariable("textord_noise_sizelimit", "0.01");
         api.SetVariable("textord_noise_normratio", "0.0");
         api.SetVariable("edges_max_children_per_outline", "40");
+        api.SetVariable("tessedit_enable_bigram_correction", "0");
 
         return api;
     }
@@ -709,7 +811,7 @@ public class OcrProcessor {
      * names become [G], [D/F#] etc. ready for OnSong/ChordPro output.
      */
     private String runStrummingLineOcr(Mat crop, int dpi) {
-        MatchedCharacterResults results = runStrumlineCharacterOcr(crop, dpi, STRUMMING_WHITELIST);
+        MatchedCharacterResults results = runStrumlineCharacterOcr(crop, dpi);
         logger.info("[runStrummingLineOcr] Caracter OCR: {}", results.ocrChars);
 
         String line = ChordDetector.convertToBracketed(results.ocrChars);
@@ -727,22 +829,19 @@ public class OcrProcessor {
      * PSM_SINGLE_WORD treats the image as a single word, which is more
      * forgiving of whitespace margins around the character.
      */
-    private String retryWithSingleWord(Mat charCrop, int dpi) {
-
+    private String retryWithSingleWord(Mat charCrop, int dpi, String whitelist) {
+        FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, whitelist); // ← always explicit
         setTessImageParameters(FALLBACK_OCR_API, charCrop, dpi);
-
         try {
             BytePointer ptr = FALLBACK_OCR_API.GetUTF8Text();
             if (ptr == null) return "";
             String result = ptr.getString().stripTrailing();
             ptr.deallocate();
-
-            logger.info("[retryWithSingleWord]  [PSM_WORD fallback] → '{}'", result);
+            logger.info("[retryWithSingleWord] [PSM_WORD fallback] → '{}'", result);
             return result;
         } finally {
             FALLBACK_OCR_API.Clear();
         }
-
     }
 
     private record MatchedCharacterResults(boolean missingMatches, String ocrChars) {
@@ -756,16 +855,23 @@ public class OcrProcessor {
     // A box wider than 2× median is almost certainly a multi-glyph chord token
     private static final double MULTI_GLYPH_WIDTH_FACTOR = 2.0;
 
-    public MatchedCharacterResults runChordlineCharacterOcr(Mat gray, int dpi, String white_list) {
+    public MatchedCharacterResults runChordlineCharacterOcr(Mat wordCrop, int dpi) {
         Mat thresh = new Mat();
         MatVector contours = new MatVector();
         StringBuilder result = new StringBuilder();
 
         // Pre-process: invert so text is white (required for findContours)
-        threshold(gray, thresh, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
-        ImageSource.saveImage(thresh, new File("build/thresholdImage.png"));
+        threshold(wordCrop, thresh, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
+//        ImageSource.saveImage(thresh, new File("build/thresholdImage.png"));
         // Find bounding boxes of all character blobs
-        findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+//        findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+        Mat kernel = getStructuringElement(MORPH_RECT, new Size(50, 1));
+        Mat smeared = new Mat();
+        dilate(wordCrop, smeared, kernel); // Connects characters into a "strip"
+
+        // Find contours of the strips to define your ROIs
+        findContours(smeared, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
         List<Rect> boundingBoxes = new ArrayList<>();
         for (int i = 0; i < contours.size(); i++) {
@@ -786,40 +892,13 @@ public class OcrProcessor {
                 .orElse(20);
 
 
-        // ── Debug visualisation — blue bounding boxes ─────────────────────
-        // Converts the binary thresh image to BGR so coloured boxes are visible,
-        // then inverts it back to black-text-on-white for readability.
-        // Saved to build/ so it survives a Gradle clean.
-//        Mat debug = new Mat();
-//        cvtColor(thresh, debug, COLOR_GRAY2BGR);
-//        bitwise_not(debug, debug); // invert: white background, black glyphs
-//
-//        Scalar blue = new Scalar(255, 0, 0, 0); // BGR — blue
-//        for (Rect rect : boundingBoxes) {
-//            rectangle(debug,
-//                    new Point(rect.x(), rect.y()),
-//                    new Point(rect.x() + rect.width() , rect.y() + rect.height()),
-//                    blue, 1, LINE_8, 0);
-//        }
-//
-//        // Unique filename per call — timestamp avoids overwriting between calls
-//        String debugPath = String.format("build/debug_contours_%d.png",
-//                System.currentTimeMillis());
-//        if (imwrite(debugPath, debug)) {
-//            logger.debug("[ContourDebug] saved {} bounding boxes to {}",
-//                    boundingBoxes.size(), debugPath);
-//        } else {
-//            logger.warn("[ContourDebug] could not save debug image to {}", debugPath);
-//        }
-//        debug.release();
-        // ── End debug ─────────────────────────────────────────────────────
+//        saveDebugImage(thresh, boundingBoxes);
 
 
         // Sort left-to-right — critical for correct chord/stroke ordering
         boundingBoxes.sort(Comparator.comparingInt(Rect::x));
 
         int recognizedCount = 0;
-        INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, white_list);
         try {
             for (Rect rect : boundingBoxes) {
 
@@ -833,12 +912,12 @@ public class OcrProcessor {
                 int px = 2;
                 int x = Math.max(0, rect.x() - px);
                 int y = Math.max(0, rect.y() - px);
-                int w = Math.min(gray.cols() - x, rect.width() + (px * 2));
-                int h = Math.min(gray.rows() - y, rect.height() + (px * 2));
+                int w = Math.min(wordCrop.cols() - x, rect.width() + (px * 2));
+                int h = Math.min(wordCrop.rows() - y, rect.height() + (px * 2));
 
-                Mat charCrop = new Mat(gray, new Rect(x, y, w, h));
+                Mat charCrop = new Mat(wordCrop, new Rect(x, y, w, h));
 
-                String glyph;
+                String glyph = null;
                 if (rect.width() > medianWidth * MULTI_GLYPH_WIDTH_FACTOR) {
                     // ── MULTI-GLYPH FALLBACK ─────────────────────────────────────
                     // Contour is too wide to be a single character — glyphs are
@@ -850,14 +929,27 @@ public class OcrProcessor {
                     logger.info("[MultiGlyph] width={} median={} → PSM_SINGLE_WORD → '{}'",
                             rect.width(), (int) medianWidth, glyph);
                 } else {
+                    INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, CHORD_LINE_WHITELIST);
+
                     // ── SINGLE CHARACTER ─────────────────────────────────────────
                     setTessImageParameters(INDIVIDUAL_OCR_API, charCrop, dpi);
                     BytePointer ptr = INDIVIDUAL_OCR_API.GetUTF8Text();
-                    glyph = ptr != null ? ptr.getString().stripTrailing() : "";
-                    if (ptr != null) ptr.deallocate();
+                    if (ptr != null) {
+                        glyph = ptr.getString().stripTrailing();
+                        ptr.deallocate();
+                    }
 
                     if (glyph.isEmpty()) {
-                        glyph = retryWithSingleWord(charCrop, dpi);
+                        glyph = retryWithSingleWord(charCrop, dpi, CHORD_LINE_WHITELIST);
+                    }
+
+                    if (!glyph.isEmpty()) {
+                        recognizedCount++;
+                        result.append(glyph);
+                    } else {
+                        result.append("⚠️");
+                        logger.warn("[strumlinecharocr] [⚠️] x={} w={} h={} — no result",
+                                rect.x(), rect.width(), rect.height());
                     }
                 }
 
@@ -879,6 +971,36 @@ public class OcrProcessor {
         return new MatchedCharacterResults(recognizedCount < boundingBoxes.size(), result.toString().stripTrailing());
     }
 
+    private static void saveDebugImage(Mat thresh, List<Rect> boundingBoxes) {
+        // ── Debug visualisation — blue bounding boxes ─────────────────────
+        // Converts the binary thresh image to BGR so coloured boxes are visible,
+        // then inverts it back to black-text-on-white for readability.
+        // Saved to build/ so it survives a Gradle clean.
+        Mat debug = new Mat();
+        cvtColor(thresh, debug, COLOR_GRAY2BGR);
+        bitwise_not(debug, debug); // invert: white background, black glyphs
+
+        Scalar blue = new Scalar(255, 0, 0, 0); // BGR — blue
+        for (Rect rect : boundingBoxes) {
+            rectangle(debug,
+                    new Point(rect.x(), rect.y()),
+                    new Point(rect.x() + rect.width() , rect.y() + rect.height()),
+                    blue, 1, LINE_8, 0);
+        }
+
+        // Unique filename per call — timestamp avoids overwriting between calls
+        String debugPath = String.format("build/debug_contours_%d.png",
+                System.currentTimeMillis());
+        if (imwrite(debugPath, debug)) {
+            logger.debug("[ContourDebug] saved {} bounding boxes to {}",
+                    boundingBoxes.size(), debugPath);
+        } else {
+            logger.warn("[ContourDebug] could not save debug image to {}", debugPath);
+        }
+        debug.release();
+        // ── End debug ─────────────────────────────────────────────────────
+    }
+
     /**
      * Recognizes a multi-glyph chord token as a single word.
      *
@@ -892,7 +1014,7 @@ public class OcrProcessor {
      */
     private String recognizeAsChord(Mat crop, int dpi) {
         try {
-            FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST,          CHORD_LINE_WHITELIST);
+            FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, CHORD_LINE_WHITELIST);
             setTessImageParameters(FALLBACK_OCR_API, crop, dpi);
 
             BytePointer ptr = FALLBACK_OCR_API.GetUTF8Text();
@@ -934,7 +1056,7 @@ public class OcrProcessor {
      * [] brackets). Only chord names should be in [] — convertToBracketed()
      * handles that. Wrapping '/' in [/] was confusing the downstream format.
      */
-    public MatchedCharacterResults runStrumlineCharacterOcr(Mat gray, int dpi, String white_list) {
+    public MatchedCharacterResults runStrumlineCharacterOcr(Mat gray, int dpi) {
         Mat thresh = new Mat();
         MatVector contours = new MatVector();
         StringBuilder result = new StringBuilder();
@@ -945,7 +1067,6 @@ public class OcrProcessor {
         // Find bounding boxes of all character blobs
         findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
-
         List<Rect> boundingBoxes = new ArrayList<>();
         for (int i = 0; i < contours.size(); i++) {
             Rect rect = boundingRect(contours.get(i));
@@ -953,12 +1074,23 @@ public class OcrProcessor {
             // Filter out noise (tiny dots/specks)
             if (keep) boundingBoxes.add(rect);
         }
+        contours.clear(); // ← was missing here (present in runChordlineCharacterOcr)
+
+        // Estimate typical single-glyph width from the median of all bounding boxes.
+        // A box significantly wider than this is a merged token (e.g. "A/D" at 4× scale
+        // where the slash stroke fuses with both letters into one contour).
+        double medianWidth = boundingBoxes.stream()
+                .mapToInt(Rect::width)
+                .sorted()
+                .skip(boundingBoxes.size() / 2)
+                .findFirst()
+                .orElse(20);
 
         // Sort left-to-right — critical for correct chord/stroke ordering
         boundingBoxes.sort(Comparator.comparingInt(Rect::x));
 
         int recognizedCount = 0;
-        INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, white_list);
+        INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
         try {
             for (Rect rect : boundingBoxes) {
 
@@ -977,11 +1109,11 @@ public class OcrProcessor {
                     // Narrow vertical stroke → bar line, no OCR needed
                     result.append("[|]");
                     recognizedCount++;
-                    logger.info("  [geometry] x={} w={} h={} ratio={} → |", rect.x(), rect.width(), rect.height(), aspectRatio);
+                    logger.info("  [geometry] x={} w={} h={} ratio={} → |",
+                            rect.x(), rect.width(), rect.height(), aspectRatio);
                     continue;
                 }
 
-                // ── TESSERACT CHARACTER OCR ───────────────────────────────────
                 int px = 2;
                 int x = Math.max(0, rect.x() - px);
                 int y = Math.max(0, rect.y() - px);
@@ -989,34 +1121,62 @@ public class OcrProcessor {
                 int h = Math.min(gray.rows() - y, rect.height() + (px * 2));
 
                 Mat charCrop = new Mat(gray, new Rect(x, y, w, h));
-                setTessImageParameters(INDIVIDUAL_OCR_API, charCrop, dpi);
 
-                BytePointer ptr = INDIVIDUAL_OCR_API.GetUTF8Text();
-                if (ptr != null) {
-                    String glyph = ptr.getString().stripTrailing();
-                    if (!glyph.isEmpty()) {
-                        recognizedCount++;
-                        result.append(glyph);
-                    } else {
-                        // ── FALLBACK: retry with PSM_SINGLE_WORD ─────────────────────
-                        // PSM_SINGLE_CHAR is the strictest mode and expects the glyph
-                        // to fill the entire image. Single chord roots like 'D' with any
-                        // whitespace margin or bold-font edge artifacts consistently return
-                        // empty. PSM_SINGLE_WORD is more tolerant of padding.
-                        glyph = retryWithSingleWord(charCrop, dpi);
-                        if (!glyph.isEmpty()) {
-                            recognizedCount++;
-                            result.append(glyph);
-                        } else {
-                            // Tesseract returned nothing — emit warning marker so
-                            // the caller knows the output is incomplete.
-                            result.append("⚠️");
-                            logger.info("  [⚠️] x={} w={} h={} ratio={} — Tesseract returned empty",
-                                    rect.x(), rect.width(), rect.height(), aspectRatio);
-                        }
+                String glyph;
+
+                if (rect.width() > medianWidth * MULTI_GLYPH_WIDTH_FACTOR) {
+                    // ── MULTI-GLYPH TOKEN (e.g. "A/D" fused into one contour) ────
+                    //
+                    // At 4× preprocessing scale the slash in a slash-chord like A/D
+                    // can physically connect to both letter strokes, merging the whole
+                    // token into one contour blob. PSM_SINGLE_CHAR cannot recover from
+                    // this — it can only read one character and will silently drop the
+                    // rest, producing "AD" with no slash.
+                    //
+                    // PSM_SINGLE_WORD reads the entire crop as one token, which is
+                    // exactly what we want here. We explicitly set the whitelist to
+                    // white_list (STRUMMING_WHITELIST) so that the FALLBACK_OCR_API
+                    // is not left in whatever state a prior recognizeAsChord() call
+                    // may have set it to.
+                    FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
+                    setTessImageParameters(FALLBACK_OCR_API, charCrop, dpi);
+                    try {
+                        BytePointer ptr = FALLBACK_OCR_API.GetUTF8Text();
+                        glyph = ptr != null ? ptr.getString().stripTrailing() : "";
+                        if (ptr != null) ptr.deallocate();
+                    } finally {
+                        FALLBACK_OCR_API.Clear();
                     }
-                    ptr.deallocate();
+                    logger.info("  [multiGlyph] x={} w={} median={} → '{}'",
+                            rect.x(), rect.width(), (int) medianWidth, glyph);
+
+                } else {
+                    // ── SINGLE CHARACTER ─────────────────────────────────────────
+                    setTessImageParameters(INDIVIDUAL_OCR_API, charCrop, dpi);
+                    BytePointer ptr = INDIVIDUAL_OCR_API.GetUTF8Text();
+                    // Treat null the same as empty — before Clear() was added, null
+                    // was silently swallowed here (no fallback, no ⚠️). Always retry.
+                    glyph = ptr != null ? ptr.getString().stripTrailing() : "";
+                    if (ptr != null) ptr.deallocate();
+
+                    if (glyph.isEmpty()) {
+                        // PSM_SINGLE_CHAR is strictest — it expects the glyph to fill
+                        // the crop. Single roots like 'D' or diagonal strokes like '/'
+                        // with any margin consistently return empty or null.
+                        // PSM_SINGLE_WORD is more tolerant of padding around the glyph.
+                        glyph = retryWithSingleWord(charCrop, dpi, STRUMMING_WHITELIST);
+                    }
                 }
+
+                if (!glyph.isEmpty()) {
+                    recognizedCount++;
+                    result.append(glyph);
+                } else {
+                    result.append("⚠️");
+                    logger.warn("  [⚠️] x={} w={} h={} ratio={} — Tesseract returned empty",
+                            rect.x(), rect.width(), rect.height(), aspectRatio);
+                }
+
                 charCrop.release();
             }
         } finally {
@@ -1026,7 +1186,6 @@ public class OcrProcessor {
 
         return new MatchedCharacterResults(recognizedCount < boundingBoxes.size(), result.toString());
     }
-
     private static boolean endsInChordCharacter(StringBuilder buf) {
         if (buf == null || buf.isEmpty()) return false;
         // Check if the last character is part of a chord name (root, accidental, or extension)
@@ -1145,36 +1304,17 @@ public class OcrProcessor {
     protected Mat preprocessImage(Mat src) {
         Mat gray = new Mat();
         Mat upscaled = new Mat();
-        Mat binary = new Mat();
-        Mat sharpened = new Mat();  // ← new
         Mat normalized = new Mat();
+        Mat binary = new Mat();
 
         cvtColor(src, gray, COLOR_BGR2GRAY);
+        // Just scale up the impage using INTER_LANCZOS4 becareful with the parameters.
         resize(gray, upscaled,
                 new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
-                .9f, .9f, INTER_LANCZOS4);
-        Mat blurred = new Mat();
-//        GaussianBlur(upscaled, blurred, new Size(0, 0), 3.2);
-//        addWeighted(upscaled, 1.5, blurred, -0.5, 0, sharpened);
-        blurred.release();
+                1.0f, 1.0f, INTER_LANCZOS4);
 
         normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
         threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
-
-        /*
-
-
-    cvtColor(src, gray, COLOR_BGR2GRAY);
-    resize(gray, upscaled,
-            new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
-            0, 0, INTER_LANCZOS4);  // fx/fy ignored when Size is explicit anyway
-
-    // Unsharp mask — pushes anti-aliased edge pixels toward black or white
-    // before Otsu has to make a decision about them
-
-    normalize(sharpened, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
-    threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
-         */
 
         // ── Dark-background detection and inversion ───────────────────────────
         //
@@ -1202,7 +1342,6 @@ public class OcrProcessor {
         gray.release();
         upscaled.release();
         normalized.release();
-        sharpened.release();
         return binary;
     }
 

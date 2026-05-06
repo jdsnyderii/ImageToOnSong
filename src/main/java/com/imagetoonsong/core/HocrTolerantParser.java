@@ -205,6 +205,7 @@ public class HocrTolerantParser {
             } else if (line.isLikelyChord()) {
                 sb.append(line.wordsToString()).append(" *** \n");
             } else {
+                sb.append(line.wordsToString()).append(" unclassified\n");
                 logger.error("Found a line that is not classified {}", line.wordsToString());
             }
             sb.append('\n');
