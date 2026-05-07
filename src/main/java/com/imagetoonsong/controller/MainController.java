@@ -13,6 +13,7 @@ import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.*;
+import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +43,11 @@ public class MainController {
     @FXML private Button downloadButton;
     @FXML public Button clearTextButton;
     @FXML private ComboBox<String> styleCombo;
+    // --- New FXML fields ---
+    @FXML private WebView htmlWebView;
+    @FXML private Tab htmlViewerTab;
+    @FXML private TabPane mainTabPane;
+    @FXML private Label htmlFileLabel;
 
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -122,6 +128,27 @@ public class MainController {
         File file = fileChooser.showOpenDialog(null);
         if (file != null) {
             loadImage(file);
+        }
+    }
+
+
+    // --- Handler for the "View HTML" button ---
+    @FXML
+    private void openHtmlFile() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Open HTML File");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("HTML Files", "*.html", "*.htm")
+        );
+
+        File file = fileChooser.showOpenDialog(mainTabPane.getScene().getWindow());
+        if (file != null) {
+            htmlWebView.getEngine().load(file.toURI().toString());
+            htmlFileLabel.setText(file.getName());
+            htmlFileLabel.setStyle(""); // clear italic-only style if desired
+            // Switch to the HTML Viewer tab automatically
+            mainTabPane.getSelectionModel().select(htmlViewerTab);
+            statusLabel.setText("Loaded: " + file.getName());
         }
     }
 

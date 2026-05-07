@@ -484,7 +484,15 @@ public class HocrTolerantParser {
         String asAttr() {
             return String.format("bbox %d %d %d %d ; x_wconf %d", xLeft, yTop, xRight, yBottom, confidence);
         }
+
+        public int width() {
+            return xRight - xLeft;
+        }
+        public int height() {
+            return yBottom - yTop;
+        }
     };
+
 
     public static Bbox parseBbox(String title) {
         if (title == null) return null;

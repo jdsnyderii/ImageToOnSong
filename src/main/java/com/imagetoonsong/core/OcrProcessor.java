@@ -15,6 +15,7 @@ import org.jsoup.nodes.Element;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
@@ -24,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static com.imagetoonsong.core.ChordDetector.CHORD_PATTERN;
 import static com.imagetoonsong.core.HocrTolerantParser.Bbox;
@@ -136,6 +138,7 @@ public class OcrProcessor {
 
         PAGE_OCR_API = createTessAPI(tesseract.PSM_SPARSE_TEXT, OCR_LANGUAGE);
         PAGE_OCR_API.SetVariable(TESS_CHAR_WHITELIST, PAGE_WHITELIST);
+        PAGE_OCR_API.SetVariable("tessedit_create_hocr", "1");
 
         // Chord symbols are not real words — any dictionary or n-gram model
         // will actively hurt accuracy by pushing OCR toward real words.
@@ -160,11 +163,19 @@ public class OcrProcessor {
 
         FALLBACK_OCR_API = createTessAPI(tesseract.PSM_SINGLE_WORD, OCR_LANGUAGE);
         FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
+        FALLBACK_OCR_API.SetVariable("load_system_dawg", "0");
+        FALLBACK_OCR_API.SetVariable("load_freq_dawg", "0");
         FALLBACK_OCR_API.SetVariable("load_punc_dawg", "0");
         FALLBACK_OCR_API.SetVariable("load_number_dawg", "0");
         FALLBACK_OCR_API.SetVariable("load_unambig_dawg", "0");
         FALLBACK_OCR_API.SetVariable("load_bigram_dawg", "0");
         FALLBACK_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
+        FALLBACK_OCR_API.SetVariable("chop_enable", "1");
+        FALLBACK_OCR_API.SetVariable("wordrec_enable_assoc", "1");
+        FALLBACK_OCR_API.SetVariable("edges_min_nonhole", "6");
+        FALLBACK_OCR_API.SetVariable("textord_min_linesize", "0.4");
+        FALLBACK_OCR_API.SetVariable("tessedit_enable_bigram_correction", "0");
+        FALLBACK_OCR_API.SetVariable("textord_max_noise_size", "2");
 
         INDIVIDUAL_OCR_API = createTessAPI(tesseract.PSM_SINGLE_CHAR, OCR_LANGUAGE);
         INDIVIDUAL_OCR_API.SetVariable("load_punc_dawg", "0");
@@ -177,6 +188,8 @@ public class OcrProcessor {
                 String.valueOf(tesseract.OEM_TESSERACT_ONLY));   // same reason
         INDIVIDUAL_OCR_API.SetVariable("chop_enable", "0");
         INDIVIDUAL_OCR_API.SetVariable("wordrec_enable_assoc", "0");
+        INDIVIDUAL_OCR_API.SetVariable("textord_noise_normratio", "1.0");
+        INDIVIDUAL_OCR_API.SetVariable("textord_noise_syfract", "0.2");
     }
 
     public void shutdown() {
@@ -239,6 +252,7 @@ public class OcrProcessor {
         processed.release();
 
         try {
+            PAGE_OCR_API.SetVariable("tessedit_create_hocr", "1");
             setTessImageParameters(PAGE_OCR_API, padded, tesseractDpi);
 
             // ── First pass ───────────────────────────────────────────────────────
@@ -253,14 +267,14 @@ public class OcrProcessor {
             // ── Re-OCR pass for strumming lines ──────────────────────────────────
             Document doc = Jsoup.parse(html);
             List<LogicalLine> lines = HocrTolerantParser.clusterIntoLines(doc);
-//            saveLinesHtml(lines, "01_after_cluster");
+            saveLinesHtml(lines, "01_after_cluster");
 
             // Mutate document in place — chord words get corrected text,
             // spatial coordinates unchanged, parser sees clean data
             detectLineTypes(lines);
-//            saveLinesHtml(lines, "02_after_detectLineTypes");
+            saveLinesHtml(lines, "02_after_detectLineTypes");
             applyChordReOcrToLines(lines, padded, tesseractDpi);
-//            saveLinesHtml(lines, "03_after_chordReOcr");
+            saveLinesHtml(lines, "03_after_chordReOcr");
             Map<Integer, String> strummingOverrides = reOcrStrummingLines(doc, padded, tesseractDpi);
             padded.release();
 
@@ -281,9 +295,9 @@ public class OcrProcessor {
     private void detectLineTypes(List<LogicalLine> lines) {
         for (LogicalLine line : lines) {
             if (line.isChordLine()) { continue;}
-            if (line.isSectionHeader()) { continue;}
-            if (line.isStrummingLine()) { continue;}
             if (line.isLikelyChord()) { continue;}
+            if (line.isStrummingLine()) { continue;}
+            if (line.isSectionHeader()) { continue;}
             line.lineType = LogicalLine.LineType.LYRIC;
         }
     }
@@ -508,6 +522,8 @@ public class OcrProcessor {
 
             html.append("</table>\n</body>\n</html>\n");
 
+            File htmlFile = new File(outputPath.toUri());
+            htmlFile.deleteOnExit();
             Files.writeString(outputPath, html.toString(), StandardCharsets.UTF_8);
             logger.info("[saveLinesHtml] stage='{}' → {}", stageName, outputPath.toAbsolutePath());
 
@@ -646,7 +662,7 @@ public class OcrProcessor {
         api.SetVariable("load_system_dawg", "0");
         api.SetVariable("load_freq_dawg", "0");
         api.SetVariable("tessedit_minimal_rejection", "1");
-        api.SetVariable("edges_min_nonhole", "8");
+        api.SetVariable("edges_min_nonhole", "2");
         api.SetVariable("textord_min_linesize", "0.4");
         api.SetVariable("textord_noise_rejrows", "0");
         api.SetVariable("textord_noise_sncount", "0");
@@ -860,19 +876,35 @@ public class OcrProcessor {
         MatVector contours = new MatVector();
         StringBuilder result = new StringBuilder();
 
-        // Pre-process: invert so text is white (required for findContours)
-        threshold(wordCrop, thresh, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
-//        ImageSource.saveImage(thresh, new File("build/thresholdImage.png"));
-        // Find bounding boxes of all character blobs
-//        findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+        // Case #1 to try
+//        // Pre-process: invert so text is white (required for findContours)
+//        threshold(wordCrop, thresh, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
+////        ImageSource.saveImage(thresh, new File("build/thresholdImage.png"));
+//        // Find bounding boxes of all character blobs
+////        findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+//
+//        Mat kernel = getStructuringElement(MORPH_RECT, new Size(50, 1));
+//        Mat smeared = new Mat();
+//
+//        dilate(thresh, smeared, kernel); // Connects characters into a "strip"
+//
+//        // Find contours of the strips to define your ROIs
+//        findContours(smeared, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
+
+        // Case #2 to try
+        adaptiveThreshold(wordCrop, thresh, 255,
+                ADAPTIVE_THRESH_GAUSSIAN_C,
+                THRESH_BINARY_INV,
+                31, 10);
+
+// 2. Smear thresh (not wordCrop) to connect character blobs into strips
         Mat kernel = getStructuringElement(MORPH_RECT, new Size(50, 1));
         Mat smeared = new Mat();
-        dilate(wordCrop, smeared, kernel); // Connects characters into a "strip"
+        dilate(thresh, smeared, kernel);
 
-        // Find contours of the strips to define your ROIs
+// 3. Find contours on smeared — each contour is a character group ROI
         findContours(smeared, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-
         List<Rect> boundingBoxes = new ArrayList<>();
         for (int i = 0; i < contours.size(); i++) {
             Rect rect = boundingRect(contours.get(i));
@@ -881,6 +913,7 @@ public class OcrProcessor {
             if (keep) boundingBoxes.add(rect);
         }
         contours.clear();
+
         // Estimate typical single-glyph width from the median of all bounding boxes.
         // A box significantly wider than this is a multi-character token — route to
         // PSM_SINGLE_WORD instead of PSM_SINGLE_CHAR.
@@ -1090,7 +1123,6 @@ public class OcrProcessor {
         boundingBoxes.sort(Comparator.comparingInt(Rect::x));
 
         int recognizedCount = 0;
-        INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
         try {
             for (Rect rect : boundingBoxes) {
 
@@ -1152,6 +1184,7 @@ public class OcrProcessor {
 
                 } else {
                     // ── SINGLE CHARACTER ─────────────────────────────────────────
+                    INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
                     setTessImageParameters(INDIVIDUAL_OCR_API, charCrop, dpi);
                     BytePointer ptr = INDIVIDUAL_OCR_API.GetUTF8Text();
                     // Treat null the same as empty — before Clear() was added, null
@@ -1306,15 +1339,7 @@ public class OcrProcessor {
         Mat upscaled = new Mat();
         Mat normalized = new Mat();
         Mat binary = new Mat();
-
-        cvtColor(src, gray, COLOR_BGR2GRAY);
-        // Just scale up the impage using INTER_LANCZOS4 becareful with the parameters.
-        resize(gray, upscaled,
-                new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
-                1.0f, 1.0f, INTER_LANCZOS4);
-
-        normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
-        threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
+        Mat blurred = new Mat();
 
         // ── Dark-background detection and inversion ───────────────────────────
         //
@@ -1328,7 +1353,7 @@ public class OcrProcessor {
         //
         // meanStdDev on a binary image is either 0 or 255 per pixel, so the mean
         // directly reflects the ratio of white to black pixels.
-        Scalar mean = mean(binary);
+        Scalar mean = mean(src);
         double meanBrightness = mean.get(0);
         logger.info("Binary image mean brightness: {:.1f} — {}",
                 meanBrightness,
@@ -1336,10 +1361,22 @@ public class OcrProcessor {
 
         if (meanBrightness < 128) {
             // Invert: white text on black → black text on white
-            bitwise_not(binary, binary);
+            bitwise_not(src, src);
         }
 
+        // Case # 1 to try
+        cvtColor(src, gray, COLOR_BGR2GRAY);
+        // Just scale up the impage using INTER_LANCZOS4 becareful with the parameters.
+        resize(gray, upscaled,
+                new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
+                1.0f, 1.0f, INTER_LANCZOS4);
+
+        normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
+
+        threshold(normalized, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
+
         gray.release();
+        blurred.release();
         upscaled.release();
         normalized.release();
         return binary;

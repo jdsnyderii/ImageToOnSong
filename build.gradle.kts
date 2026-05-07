@@ -123,6 +123,7 @@ tasks.test {
     useJUnitPlatform()  // required — not enabled by default
     jvmArgs(
         "--enable-native-access=javafx.graphics",
+        "--enable-native-access=javafx.web",
         "--enable-native-access=ALL-UNNAMED"
     )
 }
@@ -190,6 +191,7 @@ tasks.withType<JavaCompile> {
 tasks.withType<JavaExec> {
     jvmArgs(
         "--enable-native-access=javafx.graphics",
+        "--enable-native-access=javafx.web",
         "--enable-native-access=ALL-UNNAMED"
     )
 }
@@ -244,6 +246,7 @@ runtime {
         jvmArgs = listOf(
             "-Dfile.encoding=UTF-8",
             "--enable-native-access=javafx.graphics",
+            "--enable-native-access=javafx.web",
             "--enable-native-access=ALL-UNNAMED"
         )
 

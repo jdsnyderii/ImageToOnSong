@@ -4,6 +4,7 @@
 <?import javafx.scene.control.*?>
 <?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.*?>
+<?import javafx.scene.web.WebView?>
 
 <BorderPane xmlns="http://javafx.com/javafx/21"
             xmlns:fx="http://javafx.com/fxml/1"
@@ -19,7 +20,8 @@
                     <MenuItem text="Exit" fx:id="exitMenuItem" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Help">
-                    <MenuItem text="About" fx:id="aboutMenuItem" onAction="#handleAboutAction"/>                </Menu>
+                    <MenuItem text="About" fx:id="aboutMenuItem" onAction="#handleAboutAction"/>
+                </Menu>
             </MenuBar>
             <ToolBar>
                 <Button text="📤 Upload Image" fx:id="uploadButton" prefWidth="140"/>
@@ -27,42 +29,63 @@
                 <Separator orientation="VERTICAL"/>
                 <Label text="Output Style:"/>
                 <ComboBox fx:id="styleCombo" prefWidth="200" value="Bracketed Chords [C]"/>
+                <Separator orientation="VERTICAL"/>
+                <Button text="🌐 View HTML" fx:id="viewHtmlButton" prefWidth="130" onAction="#openHtmlFile"/>
             </ToolBar>
         </VBox>
     </top>
 
     <center>
-        <SplitPane dividerPositions="0.45">
-            <!-- Left: Image Preview -->
-            <VBox spacing="10">
-                <padding>
-                    <Insets top="10" right="10" bottom="10" left="10"/>
-                </padding>
-                <Label text="Original Chord Sheet Image" style="-fx-font-weight: bold;"/>
-                <ScrollPane fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER" vbarPolicy="ALWAYS">
-                    <ImageView fx:id="imageView" preserveRatio="true"/>
-                </ScrollPane>
-                <Label fx:id="imageInfoLabel" text="No image loaded" style="-fx-font-style: italic;"/>
-            </VBox>
+        <TabPane fx:id="mainTabPane" tabClosingPolicy="UNAVAILABLE">
 
-            <!-- Right: OnSong Output -->
-            <VBox spacing="10">
-                <padding>
-                    <Insets top="10" right="10" bottom="10" left="10"/>
-                </padding>
-                <Label text="OnSong Bracketed Output" style="-fx-font-weight: bold;"/>
-                <TextArea fx:id="resultTextArea"
-                          promptText="Converted OnSong text will appear here..."
-                          style="-fx-font-family: 'Courier New', monospace; -fx-font-size: 14;"
-                          VBox.vgrow="ALWAYS"/>
+            <!-- Tab 1: Existing Chart Editor -->
+            <Tab text="Chart Editor">
+                <SplitPane dividerPositions="0.45">
+                    <!-- Left: Image Preview -->
+                    <VBox spacing="10">
+                        <padding>
+                            <Insets top="10" right="10" bottom="10" left="10"/>
+                        </padding>
+                        <Label text="Original Chord Sheet Image" style="-fx-font-weight: bold;"/>
+                        <ScrollPane fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER" vbarPolicy="ALWAYS">
+                            <ImageView fx:id="imageView" preserveRatio="true"/>
+                        </ScrollPane>
+                        <Label fx:id="imageInfoLabel" text="No image loaded" style="-fx-font-style: italic;"/>
+                    </VBox>
 
-                <HBox spacing="10" alignment="CENTER_RIGHT">
-                    <Button text="⌫  Clear Text" fx:id="clearTextButton"/>
-                    <Button text="📋 Copy to Clipboard" fx:id="copyButton"/>
-                    <Button text="📥 Download .onsong" fx:id="downloadButton" style="-fx-font-weight: bold;"/>
-                </HBox>
-            </VBox>
-        </SplitPane>
+                    <!-- Right: OnSong Output -->
+                    <VBox spacing="10">
+                        <padding>
+                            <Insets top="10" right="10" bottom="10" left="10"/>
+                        </padding>
+                        <Label text="OnSong Bracketed Output" style="-fx-font-weight: bold;"/>
+                        <TextArea fx:id="resultTextArea"
+                                  promptText="Converted OnSong text will appear here..."
+                                  style="-fx-font-family: 'Courier New', monospace; -fx-font-size: 14;"
+                                  VBox.vgrow="ALWAYS"/>
+                        <HBox spacing="10" alignment="CENTER_RIGHT">
+                            <Button text="⌫  Clear Text" fx:id="clearTextButton"/>
+                            <Button text="📋 Copy to Clipboard" fx:id="copyButton"/>
+                            <Button text="📥 Download .onsong" fx:id="downloadButton" style="-fx-font-weight: bold;"/>
+                        </HBox>
+                    </VBox>
+                </SplitPane>
+            </Tab>
+
+            <!-- Tab 2: HTML Viewer -->
+            <Tab text="HTML Viewer" fx:id="htmlViewerTab">
+                <VBox spacing="8">
+                    <padding>
+                        <Insets top="10" right="10" bottom="10" left="10"/>
+                    </padding>
+                    <HBox spacing="10" alignment="CENTER_LEFT">
+                        <Label fx:id="htmlFileLabel" text="No HTML file loaded" style="-fx-font-style: italic;"/>
+                    </HBox>
+                    <WebView fx:id="htmlWebView" VBox.vgrow="ALWAYS"/>
+                </VBox>
+            </Tab>
+
+        </TabPane>
     </center>
 
     <bottom>

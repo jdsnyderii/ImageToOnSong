@@ -1,10 +1,6 @@
 package com.imagetoonsong.core;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
+import java.util.*;
 import static com.imagetoonsong.core.ChordDetector.*;
 
 
@@ -76,7 +72,7 @@ public class LogicalLine {
 
         // PATH B — multi-token with recognisable slash/pipe tokens
         long chordCount = words().stream()
-                .filter(w -> BRACKETED_CHORD_PATTERN.matcher(w.text()).matches())
+                .filter(w -> CHORD_PATTERN.matcher(w.text()).matches())
                 .count();
         long slashCount = words().stream()
                 .filter(w -> w.text().matches("[/\\\\]+"))
@@ -111,12 +107,18 @@ public class LogicalLine {
         if (lineType == LogicalLine.LineType.CHORD) return true;
         if (lineType != LogicalLine.LineType.UNCLASSIFIED) return false;
 
+        if (words().size() == 1 && isChordAnomaly()) {
+            WordEntry w = words.getFirst();
+            String correctedChord = correctAnomaly();
+            clear();
+            words().add(new WordEntry(correctedChord, w.bbox));
+        }
         long total = words().stream()
                 .filter(w -> !isRepeatAnnotation(w.text()))
                 .count();
         long chordCount = words().stream()
                 .filter(w -> !isRepeatAnnotation(w.text()))
-                .filter(w -> CHORD_PATTERN.matcher(w.text()).matches() && w.bbox().confidence() >= 40)
+                .filter(w -> CHORD_PATTERN.matcher(w.text()).matches() )
                 .count();
         boolean detectedChordLine = chordCount > 0 && chordCount >= (total + 1) / 2;
         if (total == chordCount) {
@@ -127,6 +129,24 @@ public class LogicalLine {
         }
 
         return total == chordCount;
+    }
+
+    static final Map<String, String> CHORD_ANOMALY_CORRECTIONS = Map.of(
+            "Cc", "C",
+            "Gg", "G"
+    );
+
+    public boolean isChordAnomaly() {
+        if (words.isEmpty()) return false;
+        return CHORD_ANOMALY_CORRECTIONS.containsKey(words.getFirst().text);
+    }
+
+    public String correctAnomaly() {
+        if (words.isEmpty()) return null;
+        return CHORD_ANOMALY_CORRECTIONS.getOrDefault(
+                words.getFirst().text,
+                words.getFirst().text  // return original if no correction found
+        );
     }
 
     public boolean isSectionHeader() {

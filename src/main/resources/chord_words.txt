@@ -1,3 +1,4 @@
+C
 Csus2
 Csus4
 Cdim
@@ -5,6 +6,7 @@ Cadd9
 Cmaj7
 Cmaj9
 Cm7b5
+C#
 C#sus2
 C#sus4
 C#dim
