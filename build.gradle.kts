@@ -36,7 +36,7 @@ version = "1.0.0"
 
 javafx {
     version = "21"
-    modules = listOf("javafx.base", "javafx.controls", "javafx.fxml", "javafx.graphics")
+    modules = listOf("javafx.base", "javafx.controls", "javafx.fxml", "javafx.graphics", "javafx.web")
 }
 
 java {
@@ -51,7 +51,6 @@ repositories {
 }
 
 dependencies {
-    val javafxVersion = "25"
     val javacppVersion = "1.5.13"
     val javacvVersion = "1.5.13"
     val tesseractVersion = "5.5.2"
@@ -64,10 +63,6 @@ dependencies {
     val julslf4jVersion = "2.0.17"
     val javadiffVersion = "4.12"
     val commonstextVersion = "1.15.0"
-
-    // ── JavaFX ────────────────────────────────────────────────────────────────
-    implementation("org.openjfx:javafx-controls:$javafxVersion")
-    implementation("org.openjfx:javafx-fxml:$javafxVersion")
 
     // The core library for reading Exif, IPTC, XMP, etc.
     implementation("com.drewnoakes:metadata-extractor:$metadataVersion")
@@ -157,6 +152,14 @@ tasks.shadowJar {
     exclude("org/bytedeco/*/linux*/**")
     exclude("org/bytedeco/*/windows*/**")
     exclude("org/bytedeco/*/$filteredNativeClassifier/**")
+
+    // ← ADD: exclude JavaFX — must stay on module path, not embedded in fat JAR
+    exclude("javafx/**")
+    exclude("com/sun/javafx/**")
+    exclude("com/sun/glass/**")
+    exclude("com/sun/prism/**")
+    exclude("com/sun/scenario/**")
+    exclude("com/sun/webkit/**")
 }
 
 tasks.register<Exec>("signApp") {
@@ -226,11 +229,13 @@ runtime {
         "java.net.http",
         "java.sql",         // Several bytedeco helpers reference JDBC types
         "java.xml",
+        "java.scripting",    // ← add this — WebView needs javax.script
         "jdk.unsupported",  // sun.misc.Unsafe — required by bytedeco/JavaCPP
         "javafx.controls",
         "javafx.fxml",
         "javafx.graphics",
-        "javafx.base"
+        "javafx.base",
+        "javafx.web"
     ))
 
 
