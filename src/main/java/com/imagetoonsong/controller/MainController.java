@@ -42,6 +42,7 @@ public class MainController {
     @FXML private Button copyButton;
     @FXML private Button downloadButton;
     @FXML public Button clearTextButton;
+    @FXML public Button viewHtmlButton;
     @FXML private ComboBox<String> styleCombo;
     // --- New FXML fields ---
     @FXML private WebView htmlWebView;
@@ -61,7 +62,8 @@ public class MainController {
         copyButton.setOnAction(_ -> copyToClipboard());
         downloadButton.setOnAction(_ -> downloadFile());
         clearTextButton.setOnAction(_ -> clearText());
-
+        viewHtmlButton.setOnAction(_ -> openHtmlFile());
+        
         // Drag & Drop support
         imageView.setOnDragOver(this::handleDragOver);
         imageView.setOnDragDropped(this::handleDragDropped);
