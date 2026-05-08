@@ -1,4 +1,4 @@
-package com.imagetoonsong.core;
+package com.imagetoonsong.config;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,13 +16,13 @@ import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class TessData implements AutoCloseable{
+public class TessData implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(
             MethodHandles.lookup().lookupClass());
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Set<Cleaner.Cleanable> TO_CLEAN = ConcurrentHashMap.newKeySet();
-    public static String tessDirPath;
-    private static Path tempRoot;
+    public String tessDirPath;
+    private final Path tempRoot;
 
     static {
         // Register the shutdown hook once

@@ -1,0 +1,23 @@
+{
+  "name": "page-sparse",
+  "psm": 11,
+  "oem": 2,
+  "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789#♯b♭/()[]{}|., '-",
+  "variables": {
+    "tessedit_create_hocr": "1",
+    "load_system_dawg": "0",
+    "load_freq_dawg": "0",
+    "tessedit_enable_doc_dict": "0",
+    "preserve_interword_spaces": "1",
+    "tosp_min_sane_kn_sp": "1.5",
+    "tessedit_minimal_rejection": "1",
+    "edges_min_nonhole": "2",
+    "textord_min_linesize": "1.35",
+    "textord_noise_rejrows": "0",
+    "textord_noise_sncount": "0",
+    "textord_noise_sizelimit": "0.01",
+    "textord_noise_normratio": "0.0",
+    "edges_max_children_per_outline": "40",
+    "tessedit_enable_bigram_correction": "0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "individual-char",
+  "psm": 10,
+  "oem": 0,
+  "whitelist": "ABCDEFGM#♯b♭/()[]{}0123456789",
+  "variables": {
+    "load_system_dawg": "0",
+    "load_freq_dawg": "0",
+    "load_punc_dawg": "0",
+    "load_number_dawg": "0",
+    "load_unambig_dawg": "0",
+    "load_bigram_dawg": "0",
+    "tessedit_enable_doc_dict": "0",
+    "tessedit_minimal_rejection": "0",
+    "chop_enable": "0",
+    "wordrec_enable_assoc": "0",
+    "textord_noise_normratio": "1.0",
+    "textord_noise_syfract": "0.2"
+  }
+}

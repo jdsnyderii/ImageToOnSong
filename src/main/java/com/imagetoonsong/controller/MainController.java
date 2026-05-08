@@ -180,19 +180,17 @@ public class MainController {
         executor.submit(() -> {
             logger.info("=== OCR START ===");
 
-
-            OcrProcessor ocrProcessor = new OcrProcessor();
-            OnSongBuilder builder = new OnSongBuilder();
-            final String existingText = resultTextArea.getText();
-            boolean emptyTextBox = existingText.isEmpty();
             long startTime = System.currentTimeMillis();
-
             Task<String> ocrTask = new Task<>() {
                 @Override
                 protected String call() throws Exception {
-                String rawText = ocrProcessor.extractText(imageSource);
-                logger.info("OCR finished - raw text length: {}", rawText.length());
-                return builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
+                    OcrProcessor ocrProcessor = new OcrProcessor();
+                    OnSongBuilder builder = new OnSongBuilder();
+                    final String existingText = resultTextArea.getText();
+                    boolean emptyTextBox = existingText.isEmpty();
+                    String rawText = ocrProcessor.extractText(imageSource);
+                    logger.info("OCR finished - raw text length: {}", rawText.length());
+                    return builder.buildOnSong(rawText, "Untitled Song", "Unknown Artist", emptyTextBox);
                 }
             };
 
@@ -200,7 +198,7 @@ public class MainController {
                 long duration = System.currentTimeMillis() - startTime;
                 String result = ocrTask.getValue();
                 String resultText = result.isEmpty() ? "No text detected." : result;
-                String currentOnSongText = existingText + resultText;
+                String currentOnSongText = resultTextArea.getText() + resultText;
                 resultTextArea.setText(currentOnSongText);
                 statusLabel.setText("✅ Done in " + (duration / 1000) + " seconds");
                 progressIndicator.setVisible(false);

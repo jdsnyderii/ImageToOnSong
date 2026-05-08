@@ -2,7 +2,7 @@ package com.imagetoonsong;
 
 import com.imagetoonsong.core.ImageMetadata;
 import com.imagetoonsong.core.ImageSource;
-import com.imagetoonsong.core.TessData;
+import com.imagetoonsong.config.TessData;
 import com.imagetoonsong.events.AppEventBus;
 import com.imagetoonsong.events.DropImageEvent;
 import com.imagetoonsong.events.PasteImageEvent;
@@ -32,12 +32,19 @@ public class App extends Application {
 
     private static final Logger logger = LoggerFactory.getLogger(
             MethodHandles.lookup().lookupClass());
-    TessData tessData;
+    public static TessData TESS_DATA;
+    static {
+        try {
+            TESS_DATA = new TessData();
+        } catch (Exception e) {
+            logger.error(e.getMessage());
+            TESS_DATA = null;
+        }
+    }
 
     @Override
     public void start(Stage primaryStage) throws Exception {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/main.fxml"));
-        tessData = new TessData();
         Scene scene = new Scene(loader.load());
         sceneSetup(scene);
         primaryStageSetup(primaryStage, scene);
@@ -119,9 +126,9 @@ public class App extends Application {
     public void stop() throws Exception {
         logger.info("App.stop() was called");
         AppEventBus.getInstance().shutdown();
-        if (tessData != null) {
-            tessData.close();
-            tessData = null;
+        if (TESS_DATA != null) {
+            TESS_DATA.close();
+            TESS_DATA = null;
         }
         super.stop();
     }

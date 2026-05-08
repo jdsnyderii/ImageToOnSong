@@ -1,0 +1,22 @@
+{
+  "name": "chord-fallback",
+  "psm": 7,
+  "oem": 3,
+  "whitelist": "ABCDEFGMbmajisudgntø°△Δ#²³⁴⁵⁶⁷⁸⁹ˢᵘᵐᵃʲᵒᵈⁱⁿᵗᵍ⁺⁻/() 0123456789",
+  "variables": {
+    "load_system_dawg": "0",
+    "load_freq_dawg": "0",
+    "load_punc_dawg": "0",
+    "load_number_dawg": "0",
+    "load_unambig_dawg": "0",
+    "load_bigram_dawg": "0",
+    "tessedit_enable_doc_dict": "0",
+    "preserve_interword_spaces": "1",
+    "chop_enable": "1",
+    "wordrec_enable_assoc": "1",
+    "edges_min_nonhole": "12",
+    "textord_min_linesize": "1.4",
+    "tessedit_enable_bigram_correction": "0",
+    "textord_max_noise_size": "2"
+  }
+}
