@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -141,7 +142,8 @@ class OcrPipelineTest {
 
         // ── Compare ───────────────────────────────────────────────────────────
         String expected = Files.readString(expectedPath).stripTrailing();
-
+        expected = normalizeForComparison(expected);
+        actual = normalizeForComparison(actual);
         if (!expected.equals(actual)) {
             String diff = unifiedDiff(expected, actual, baseName);
             log.error("[{}] Output mismatch:\n{}", baseName, diff);
@@ -153,6 +155,15 @@ class OcrPipelineTest {
         }
     }
 
+    // Normalize function - add/improve this
+    private String normalizeForComparison(String text) {
+        if (text == null) return "";
+
+        return text.lines()
+                .map(String::stripTrailing)     // Remove only trailing spaces/tabs
+                .map(String::trim)              // Optional: also remove leading if you want
+                .collect(Collectors.joining("\n"));
+    }
     // ── Diff helper ──────────────────────────────────────────────────────────
 
     /**

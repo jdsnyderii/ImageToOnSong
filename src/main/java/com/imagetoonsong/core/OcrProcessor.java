@@ -157,7 +157,7 @@ public class OcrProcessor {
         LINE_OCR_API.SetVariable("chop_enable", "1");
         LINE_OCR_API.SetVariable("wordrec_enable_assoc", "1");
         LINE_OCR_API.SetVariable("edges_min_nonhole", "12");
-        LINE_OCR_API.SetVariable("textord_min_linesize", "1.1");
+        LINE_OCR_API.SetVariable("textord_min_linesize", "1.4");
         LINE_OCR_API.SetVariable("tessedit_enable_bigram_correction", "0");
         LINE_OCR_API.SetVariable("textord_max_noise_size", "2");
 
@@ -664,7 +664,7 @@ public class OcrProcessor {
         api.SetVariable("load_freq_dawg", "0");
         api.SetVariable("tessedit_minimal_rejection", "1");
         api.SetVariable("edges_min_nonhole", "2");
-        api.SetVariable("textord_min_linesize", "0.4");
+        api.SetVariable("textord_min_linesize", "1.35");
         api.SetVariable("textord_noise_rejrows", "0");
         api.SetVariable("textord_noise_sncount", "0");
         api.SetVariable("textord_noise_sizelimit", "0.01");
