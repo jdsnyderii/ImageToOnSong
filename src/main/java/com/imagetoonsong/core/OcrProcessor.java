@@ -234,7 +234,7 @@ public class OcrProcessor {
      * 4. Pass hOCR + strumming overrides to HocrTolerantParser.
      */
     public String extractText(ImageSource imageSource) throws Exception {
-        logger.info("=== Starting Bytedeco Tesseract OCR ===");
+        logger.debug("=== Starting Bytedeco Tesseract OCR ===");
         int tesseractDpi = Math.round(imageSource.dpi());
 
         Java2DFrameConverter biConverter = new Java2DFrameConverter();
@@ -420,11 +420,12 @@ public class OcrProcessor {
      */
     public static void saveLinesHtml(List<LogicalLine> lines, String stageName) {
         try {
-            Path buildDir = Paths.get("build");
-            Files.createDirectories(buildDir);
+            Path workingDir = Path.of("").toAbsolutePath();
+            Files.createDirectories(workingDir.resolve("Documents/ImageToOnSong/"));
+            logger.info("Writing to directory {}", workingDir.toString());
 
             String filename = stageName + "_" + System.currentTimeMillis() + ".html";
-            Path outputPath = buildDir.resolve(filename);
+            Path outputPath = workingDir.resolve(filename);
 
             StringBuilder html = new StringBuilder(4096);
             html.append("""
@@ -641,7 +642,7 @@ public class OcrProcessor {
                 image.channels(), (int) image.step());
         api.SetVariable("user_defined_dpi", String.valueOf(tesseractDpi));
         api.SetSourceResolution(tesseractDpi);
-        logger.info("Using scaled DPI: {}", tesseractDpi);
+        logger.debug("Using scaled DPI: {}", tesseractDpi);
     }
 
     protected static TessBaseAPI createTessAPI(int pageSegMode, String language) {
@@ -651,7 +652,7 @@ public class OcrProcessor {
             api.close();
             throw new RuntimeException("Could not initialize Tesseract with tessdata at: " + tessDirPath);
         }
-        logger.info("Tesseract initialized with tessdata {}", tessDirPath);
+        logger.debug("Tesseract initialized with tessdata {}", tessDirPath);
 
         api.SetPageSegMode(pageSegMode);
         api.SetVariable("tessedit_ocr_engine_mode", String.valueOf(tesseract.OEM_TESSERACT_LSTM_COMBINED));
