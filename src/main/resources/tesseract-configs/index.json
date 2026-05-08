@@ -1,0 +1,9 @@
+[
+  "default.json",
+  "page-sparse.json",
+  "chord-single-char.json",
+  "strum-single-char.json",
+  "strum-fallback.json",
+  "chord-line.json",
+  "chord-fallback.json"
+]

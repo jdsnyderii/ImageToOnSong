@@ -6,7 +6,7 @@ import com.github.difflib.patch.Patch;
 import com.imagetoonsong.core.ImageSource;
 import com.imagetoonsong.core.OcrProcessor;
 import com.imagetoonsong.core.OnSongBuilder;
-import com.imagetoonsong.core.TessData;
+import com.imagetoonsong.config.TessData;
 import javafx.application.Platform;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.parallel.Execution;
@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static com.imagetoonsong.App.TESS_DATA;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -62,16 +63,19 @@ class OcrPipelineTest {
     private static final Path IMAGES_DIR  = RESOURCES.resolve("images");
     private static final Path EXPECTED_DIR = RESOURCES.resolve("expected-outputs");
 
-    /** Shared TessData — holds strong reference so Cleaner doesn't GC it mid-run. */
-    private static TessData tessData;
-
     // ── Setup / teardown ─────────────────────────────────────────────────────
+    private static TessData TESS_DATA = null;
 
+    static {
+        try {
+            TESS_DATA = new TessData();
+        } catch (IOException e) {
+            TESS_DATA = null;
+            log.error("Can't load tessdata {}", e.getMessage());
+        }
+    }
     @BeforeAll
     static void setUp() throws Exception {
-        tessData = new TessData();
-        log.info("TessData initialized at: {}", TessData.tessDirPath);
-
         try {
             Platform.startup(() -> {});
         } catch (IllegalStateException e) {
@@ -82,7 +86,7 @@ class OcrPipelineTest {
 
     @AfterAll
     static void tearDown() throws Exception {
-        if (tessData != null) tessData.close();
+        if (TESS_DATA != null) TESS_DATA.close();
     }
 
     // ── Data provider ────────────────────────────────────────────────────────

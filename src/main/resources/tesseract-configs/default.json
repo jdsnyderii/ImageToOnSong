@@ -1,0 +1,12 @@
+{
+  "name": "default",
+  "psm": 3,
+  "oem": 3,
+  "whitelist": "",
+  "variables": {
+    "load_system_dawg": "0",
+    "load_freq_dawg": "0",
+    "tessedit_enable_doc_dict": "0",
+    "preserve_interword_spaces": "1"
+  }
+}

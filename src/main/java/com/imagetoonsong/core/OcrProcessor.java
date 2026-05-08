@@ -1,5 +1,7 @@
 package com.imagetoonsong.core;
 
+import com.imagetoonsong.config.TessConfig;
+import com.imagetoonsong.config.TessConfigLoader;
 import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.IntPointer;
 import org.bytedeco.javacpp.indexer.IntIndexer;
@@ -15,26 +17,25 @@ import org.jsoup.nodes.Element;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
+import static com.imagetoonsong.App.TESS_DATA;
 import static com.imagetoonsong.core.ChordDetector.CHORD_PATTERN;
 import static com.imagetoonsong.core.HocrTolerantParser.Bbox;
-import static com.imagetoonsong.core.TessData.tessDirPath;
 import static org.bytedeco.opencv.global.opencv_core.*;
 import static org.bytedeco.opencv.global.opencv_imgcodecs.imwrite;
 import static org.bytedeco.opencv.global.opencv_imgproc.*;
 
 public class OcrProcessor {
+
+    public static final TessConfigLoader configLoader = new TessConfigLoader();
 
     public static final String SPAN_OCRX_WORD = "span.ocrx_word";
     public static final String SPAN_OCR_LINE = "span.ocr_line";
@@ -45,15 +46,15 @@ public class OcrProcessor {
     public static final String OCR_LANGUAGE = "eng";
     public static final String TITLE = "title";
 
-    private TessBaseAPI CHORD_OCR_API;
     private TessBaseAPI PAGE_OCR_API;
     private TessBaseAPI LINE_OCR_API;
-    private TessBaseAPI FALLBACK_OCR_API;
-    private TessBaseAPI INDIVIDUAL_OCR_API;
-
+    private TessBaseAPI CHORD_FALLBACK;
+    private TessBaseAPI CHORD_SINGLE_CHAR;
+    private TessBaseAPI STRUMMING_SINGLE_CHAR;
+    private TessBaseAPI STRUMMING_FALLBACK;
 
     // ── Angle threshold for '|' vs '/' classification ───────────────────────
-    private static final double ANGLE_THRESHOLD_DEGREES = 83.0;
+    private static final double ANGLE_THRESHOLD_DEGREES = 65.0;
 
     /**
      * Restricted character whitelist for strumming-line re-OCR.
@@ -114,106 +115,30 @@ public class OcrProcessor {
      */
     private static final double BARLINE_ASPECT_RATIO_THRESHOLD = 0.30;
 
-    private static final int PREPROCESSING_SCALE = 4;
+    // The recognition for this is very sensitive to 4.0 changes.
+    private static final float PREPROCESSING_SCALE = 4.0f;
 
     private static final String TESS_CHAR_WHITELIST = "tessedit_char_whitelist";
 
+    List<TessBaseAPI> tessBaseAPIList = new ArrayList<>();
+
     public OcrProcessor() {
-        CHORD_OCR_API = createTessAPI(tesseract.PSM_SINGLE_CHAR, OCR_LANGUAGE);
-        CHORD_OCR_API.SetVariable(TESS_CHAR_WHITELIST, CHORD_LINE_WHITELIST);
-        CHORD_OCR_API.SetVariable("load_punc_dawg", "0");
-        CHORD_OCR_API.SetVariable("load_number_dawg", "0");
-        CHORD_OCR_API.SetVariable("load_unambig_dawg", "0");
-        CHORD_OCR_API.SetVariable("load_bigram_dawg", "0");
-        CHORD_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
-        CHORD_OCR_API.SetVariable("tessedit_minimal_rejection", "0");
-// In the constructor, after CHORD_OCR_API setup:
-        CHORD_OCR_API.SetVariable("tessedit_ocr_engine_mode",
-                String.valueOf(tesseract.OEM_TESSERACT_ONLY));   // PSM_SINGLE_CHAR needs legacy engine
-        CHORD_OCR_API.SetVariable("chop_enable", "0");
-        CHORD_OCR_API.SetVariable("wordrec_enable_assoc", "0");
-        CHORD_OCR_API.SetVariable("wordrec_enable_assoc", "0");
-        CHORD_OCR_API.SetVariable("textord_noise_normratio", "3.0");
-        CHORD_OCR_API.SetVariable("textord_noise_syfract", "0.2");
+        PAGE_OCR_API = createApiFromConfig("page-sparse"); tessBaseAPIList.add(PAGE_OCR_API);
+        LINE_OCR_API = createApiFromConfig("chord-line"); tessBaseAPIList.add(LINE_OCR_API);
+        CHORD_FALLBACK = createApiFromConfig("chord-fallback"); tessBaseAPIList.add(CHORD_FALLBACK);
+        CHORD_SINGLE_CHAR = createApiFromConfig("chord-single-char"); tessBaseAPIList.add(CHORD_SINGLE_CHAR);
+        STRUMMING_FALLBACK = createApiFromConfig("strum-fallback"); tessBaseAPIList.add(STRUMMING_FALLBACK);
+        STRUMMING_SINGLE_CHAR = createApiFromConfig("strum-single-char"); tessBaseAPIList.add(STRUMMING_SINGLE_CHAR);
 
-        PAGE_OCR_API = createTessAPI(tesseract.PSM_SPARSE_TEXT, OCR_LANGUAGE);
-        PAGE_OCR_API.SetVariable(TESS_CHAR_WHITELIST, PAGE_WHITELIST);
-        PAGE_OCR_API.SetVariable("tessedit_create_hocr", "1");
-
-        // Chord symbols are not real words — any dictionary or n-gram model
-        // will actively hurt accuracy by pushing OCR toward real words.
-        // e.g. "Fmaj7" gets corrected toward "family" or similar.
-        // Preserve spacing so chord tokens stay separate
-        // Keep small glyphs alive — superscripts are sub-line-height
-        LINE_OCR_API = createTessAPI(tesseract.PSM_SINGLE_LINE, OCR_LANGUAGE);
-        LINE_OCR_API.SetVariable("tessedit_char_whitelist", CHORD_LINE_WHITELIST);
-        LINE_OCR_API.SetVariable("load_system_dawg", "0");
-        LINE_OCR_API.SetVariable("load_freq_dawg", "0");
-        LINE_OCR_API.SetVariable("load_punc_dawg", "0");
-        LINE_OCR_API.SetVariable("load_number_dawg", "0");
-        LINE_OCR_API.SetVariable("load_unambig_dawg", "0");
-        LINE_OCR_API.SetVariable("load_bigram_dawg", "0");
-        LINE_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
-        LINE_OCR_API.SetVariable("chop_enable", "1");
-        LINE_OCR_API.SetVariable("wordrec_enable_assoc", "1");
-        LINE_OCR_API.SetVariable("edges_min_nonhole", "12");
-        LINE_OCR_API.SetVariable("textord_min_linesize", "1.4");
-        LINE_OCR_API.SetVariable("tessedit_enable_bigram_correction", "0");
-        LINE_OCR_API.SetVariable("textord_max_noise_size", "2");
-
-        FALLBACK_OCR_API = createTessAPI(tesseract.PSM_SINGLE_WORD, OCR_LANGUAGE);
-        FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
-        FALLBACK_OCR_API.SetVariable("load_system_dawg", "0");
-        FALLBACK_OCR_API.SetVariable("load_freq_dawg", "0");
-        FALLBACK_OCR_API.SetVariable("load_punc_dawg", "0");
-        FALLBACK_OCR_API.SetVariable("load_number_dawg", "0");
-        FALLBACK_OCR_API.SetVariable("load_unambig_dawg", "0");
-        FALLBACK_OCR_API.SetVariable("load_bigram_dawg", "0");
-        FALLBACK_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
-        FALLBACK_OCR_API.SetVariable("chop_enable", "1");
-        FALLBACK_OCR_API.SetVariable("wordrec_enable_assoc", "1");
-        FALLBACK_OCR_API.SetVariable("edges_min_nonhole", "6");
-        FALLBACK_OCR_API.SetVariable("textord_min_linesize", "0.4");
-        FALLBACK_OCR_API.SetVariable("tessedit_enable_bigram_correction", "0");
-        FALLBACK_OCR_API.SetVariable("textord_max_noise_size", "2");
-
-        INDIVIDUAL_OCR_API = createTessAPI(tesseract.PSM_SINGLE_CHAR, OCR_LANGUAGE);
-        INDIVIDUAL_OCR_API.SetVariable("load_punc_dawg", "0");
-        INDIVIDUAL_OCR_API.SetVariable("load_number_dawg", "0");
-        INDIVIDUAL_OCR_API.SetVariable("load_unambig_dawg", "0");
-        INDIVIDUAL_OCR_API.SetVariable("load_bigram_dawg", "0");
-        INDIVIDUAL_OCR_API.SetVariable("tessedit_enable_doc_dict", "0");
-        INDIVIDUAL_OCR_API.SetVariable("tessedit_minimal_rejection", "0");
-        INDIVIDUAL_OCR_API.SetVariable("tessedit_ocr_engine_mode",
-                String.valueOf(tesseract.OEM_TESSERACT_ONLY));   // same reason
-        INDIVIDUAL_OCR_API.SetVariable("chop_enable", "0");
-        INDIVIDUAL_OCR_API.SetVariable("wordrec_enable_assoc", "0");
-        INDIVIDUAL_OCR_API.SetVariable("textord_noise_normratio", "1.0");
-        INDIVIDUAL_OCR_API.SetVariable("textord_noise_syfract", "0.2");
+        logger.info("All Tesseract APIs initialized with config system");
     }
 
     public void shutdown() {
-        try {
-            INDIVIDUAL_OCR_API.close();
-        } catch (Exception e) {
-        }
-
-        try {
-            FALLBACK_OCR_API.close();
-        } catch (Exception e) {
-        }
-
-        try {
-            LINE_OCR_API.close();
-        } catch (Exception e) {
-        }
-        try {
-            PAGE_OCR_API.close();
-        } catch (Exception e) {
-        }
-        try {
-            CHORD_OCR_API.close();
-        } catch (Exception e) {
+        for (TessBaseAPI tessBaseAPI : tessBaseAPIList) {
+            try {
+                tessBaseAPI.close();
+            } catch (Exception e) {
+            }
         }
     }
 
@@ -252,7 +177,6 @@ public class OcrProcessor {
         processed.release();
 
         try {
-            PAGE_OCR_API.SetVariable("tessedit_create_hocr", "1");
             setTessImageParameters(PAGE_OCR_API, padded, tesseractDpi);
 
             // ── First pass ───────────────────────────────────────────────────────
@@ -648,11 +572,11 @@ public class OcrProcessor {
     protected static TessBaseAPI createTessAPI(int pageSegMode, String language) {
         TessBaseAPI api = new TessBaseAPI();
 
-        if (api.Init(tessDirPath, language) != 0) {
+        if (api.Init(TESS_DATA.tessDirPath, language) != 0) {
             api.close();
-            throw new RuntimeException("Could not initialize Tesseract with tessdata at: " + tessDirPath);
+            throw new RuntimeException("Could not initialize Tesseract with tessdata at: " + TESS_DATA.tessDirPath);
         }
-        logger.debug("Tesseract initialized with tessdata {}", tessDirPath);
+        logger.debug("Tesseract initialized with tessdata {}", TESS_DATA.tessDirPath);
 
         api.SetPageSegMode(pageSegMode);
         api.SetVariable("tessedit_ocr_engine_mode", String.valueOf(tesseract.OEM_TESSERACT_LSTM_COMBINED));
@@ -846,18 +770,17 @@ public class OcrProcessor {
      * PSM_SINGLE_WORD treats the image as a single word, which is more
      * forgiving of whitespace margins around the character.
      */
-    private String retryWithSingleWord(Mat charCrop, int dpi, String whitelist) {
-        FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, whitelist); // ← always explicit
-        setTessImageParameters(FALLBACK_OCR_API, charCrop, dpi);
+    private String retryWithSingleWord(Mat charCrop, int dpi, TessBaseAPI api) {
+        setTessImageParameters(api, charCrop, dpi);
         try {
-            BytePointer ptr = FALLBACK_OCR_API.GetUTF8Text();
+            BytePointer ptr = api.GetUTF8Text();
             if (ptr == null) return "";
             String result = ptr.getString().stripTrailing();
             ptr.deallocate();
             logger.info("[retryWithSingleWord] [PSM_WORD fallback] → '{}'", result);
             return result;
         } finally {
-            FALLBACK_OCR_API.Clear();
+            api.Clear();
         }
     }
 
@@ -963,18 +886,16 @@ public class OcrProcessor {
                     logger.info("[MultiGlyph] width={} median={} → PSM_SINGLE_WORD → '{}'",
                             rect.width(), (int) medianWidth, glyph);
                 } else {
-                    INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, CHORD_LINE_WHITELIST);
-
                     // ── SINGLE CHARACTER ─────────────────────────────────────────
-                    setTessImageParameters(INDIVIDUAL_OCR_API, charCrop, dpi);
-                    BytePointer ptr = INDIVIDUAL_OCR_API.GetUTF8Text();
+                    setTessImageParameters(CHORD_SINGLE_CHAR, charCrop, dpi);
+                    BytePointer ptr = CHORD_SINGLE_CHAR.GetUTF8Text();
                     if (ptr != null) {
                         glyph = ptr.getString().stripTrailing();
                         ptr.deallocate();
                     }
 
                     if (glyph.isEmpty()) {
-                        glyph = retryWithSingleWord(charCrop, dpi, CHORD_LINE_WHITELIST);
+                        glyph = retryWithSingleWord(charCrop, dpi, CHORD_FALLBACK);
                     }
 
                     if (!glyph.isEmpty()) {
@@ -998,7 +919,7 @@ public class OcrProcessor {
                 charCrop.release();
             }
         } finally {
-            INDIVIDUAL_OCR_API.Clear();
+            CHORD_SINGLE_CHAR.Clear();
             thresh.release();
         }
 
@@ -1048,10 +969,9 @@ public class OcrProcessor {
      */
     private String recognizeAsChord(Mat crop, int dpi) {
         try {
-            FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, CHORD_LINE_WHITELIST);
-            setTessImageParameters(FALLBACK_OCR_API, crop, dpi);
+            setTessImageParameters(CHORD_SINGLE_CHAR, crop, dpi);
 
-            BytePointer ptr = FALLBACK_OCR_API.GetUTF8Text();
+            BytePointer ptr = CHORD_SINGLE_CHAR.GetUTF8Text();
             if (ptr == null) return "";
             String text = ptr.getString().stripTrailing();
             ptr.deallocate();
@@ -1059,7 +979,7 @@ public class OcrProcessor {
             logger.info("[recognizeAsChord] from {} → '{}'", text, correctedChord);
             return correctedChord;
         } finally {
-            FALLBACK_OCR_API.Clear();
+            CHORD_SINGLE_CHAR.Clear();
         }
     }
 
@@ -1171,23 +1091,21 @@ public class OcrProcessor {
                     // white_list (STRUMMING_WHITELIST) so that the FALLBACK_OCR_API
                     // is not left in whatever state a prior recognizeAsChord() call
                     // may have set it to.
-                    FALLBACK_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
-                    setTessImageParameters(FALLBACK_OCR_API, charCrop, dpi);
+                    setTessImageParameters(STRUMMING_FALLBACK, charCrop, dpi);
                     try {
-                        BytePointer ptr = FALLBACK_OCR_API.GetUTF8Text();
+                        BytePointer ptr = STRUMMING_FALLBACK.GetUTF8Text();
                         glyph = ptr != null ? ptr.getString().stripTrailing() : "";
                         if (ptr != null) ptr.deallocate();
                     } finally {
-                        FALLBACK_OCR_API.Clear();
+                        STRUMMING_FALLBACK.Clear();
                     }
                     logger.info("  [multiGlyph] x={} w={} median={} → '{}'",
                             rect.x(), rect.width(), (int) medianWidth, glyph);
 
                 } else {
                     // ── SINGLE CHARACTER ─────────────────────────────────────────
-                    INDIVIDUAL_OCR_API.SetVariable(TESS_CHAR_WHITELIST, STRUMMING_WHITELIST);
-                    setTessImageParameters(INDIVIDUAL_OCR_API, charCrop, dpi);
-                    BytePointer ptr = INDIVIDUAL_OCR_API.GetUTF8Text();
+                    setTessImageParameters(STRUMMING_SINGLE_CHAR, charCrop, dpi);
+                    BytePointer ptr = STRUMMING_SINGLE_CHAR.GetUTF8Text();
                     // Treat null the same as empty — before Clear() was added, null
                     // was silently swallowed here (no fallback, no ⚠️). Always retry.
                     glyph = ptr != null ? ptr.getString().stripTrailing() : "";
@@ -1198,8 +1116,9 @@ public class OcrProcessor {
                         // the crop. Single roots like 'D' or diagonal strokes like '/'
                         // with any margin consistently return empty or null.
                         // PSM_SINGLE_WORD is more tolerant of padding around the glyph.
-                        glyph = retryWithSingleWord(charCrop, dpi, STRUMMING_WHITELIST);
+                        glyph = retryWithSingleWord(charCrop, dpi, STRUMMING_FALLBACK);
                     }
+                    STRUMMING_SINGLE_CHAR.Clear();
                 }
 
                 if (!glyph.isEmpty()) {
@@ -1214,7 +1133,6 @@ public class OcrProcessor {
                 charCrop.release();
             }
         } finally {
-            INDIVIDUAL_OCR_API.Clear();
             thresh.release();
         }
 
@@ -1369,7 +1287,7 @@ public class OcrProcessor {
         cvtColor(src, gray, COLOR_BGR2GRAY);
         // Just scale up the impage using INTER_LANCZOS4 becareful with the parameters.
         resize(gray, upscaled,
-                new Size(gray.cols() * PREPROCESSING_SCALE, gray.rows() * PREPROCESSING_SCALE),
+                new Size((int)(gray.cols() * PREPROCESSING_SCALE), (int)(gray.rows() * PREPROCESSING_SCALE)),
                 1.0f, 1.0f, INTER_LANCZOS4);
 
         normalize(upscaled, normalized, 0, 255, NORM_MINMAX, CV_8UC1, null);
@@ -1385,5 +1303,41 @@ public class OcrProcessor {
 
     protected int estimateDpi(File file) throws IOException {
         return ImageMetadata.extractDpi(file);
+    }
+
+
+    /**
+     * Reload all configs from disk (useful during development)
+     */
+    public void reloadConfigs() {
+        configLoader.reload();
+        logger.info("Tesseract configs reloaded");
+    }
+
+    // Example helper method
+    private TessBaseAPI createApiFromConfig(String configName) {
+        TessConfig cfg = configLoader.getConfig(configName);
+
+        TessBaseAPI api = new TessBaseAPI();
+        int init = api.Init(TESS_DATA.tessDirPath, OcrProcessor.OCR_LANGUAGE);
+        if (init != 0) {
+            api.End();
+            throw new RuntimeException("Tesseract init failed for config: " + configName);
+        }
+        api.SetPageSegMode(cfg.getPsm() != null ? cfg.getPsm() : tesseract.PSM_AUTO);
+        api.SetVariable("tessedit_ocr_engine_mode", cfg.getOem() != null ? cfg.getOem().toString() : String.valueOf(tesseract.OEM_TESSERACT_LSTM_COMBINED));
+
+        if (cfg.getWhitelist() != null && !cfg.getWhitelist().isEmpty()) {
+            api.SetVariable("tessedit_char_whitelist", cfg.getWhitelist());
+        }
+
+        if (cfg.getBlacklist() != null && !cfg.getBlacklist().isEmpty()) {
+            api.SetVariable("tessedit_char_blacklist", cfg.getBlacklist());
+        }
+
+        // Apply all other variables
+        cfg.getVariables().forEach(api::SetVariable);
+
+        return api;
     }
 }

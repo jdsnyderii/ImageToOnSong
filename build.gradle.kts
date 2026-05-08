@@ -63,9 +63,12 @@ dependencies {
     val julslf4jVersion = "2.0.17"
     val javadiffVersion = "4.12"
     val commonstextVersion = "1.15.0"
+    val jacksonVersion = "2.21.3"
 
     // The core library for reading Exif, IPTC, XMP, etc.
     implementation("com.drewnoakes:metadata-extractor:$metadataVersion")
+    implementation("com.fasterxml.jackson.core:jackson-core:$jacksonVersion")
+    implementation("com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}")
 
     // ── JavaCPP runtime ───────────────────────────────────────────────────────
     implementation("org.bytedeco:javacpp:$javacppVersion")
