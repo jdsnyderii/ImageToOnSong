@@ -1,3 +1,7 @@
 /build/
 /.gradle/
 /gradle/
+/lineCrop.png
+/bitflip.png
+/clipboard.png
+/lineOcr.png

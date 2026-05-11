@@ -301,6 +301,33 @@ public class OcrProcessor {
     }
 
     /**
+     * Returns a new Mat with 10px of white padding added above and below.
+     * <p>
+     * Uses BORDER_CONSTANT filled with white (255) — safe for both grayscale
+     * and binary (pre-thresholded) images. Left and right edges are unchanged.
+     * <p>
+     * The caller owns the returned Mat and is responsible for calling release().
+     *
+     * @param src any single- or multi-channel Mat (grayscale, binary, BGR)
+     * @return new padded Mat — never a submatrix of src
+     */
+    private static final int OCR_VERT_PAD_PX = 10;
+
+    static Mat addOcrVerticalPadding(Mat src) {
+        Mat padded = new Mat();
+        copyMakeBorder(
+                src, padded,
+                OCR_VERT_PAD_PX,   // top
+                OCR_VERT_PAD_PX,   // bottom
+                0,                  // left
+                0,                  // right
+                BORDER_ISOLATED,
+                Scalar.WHITE        // 255 for all channels
+        );
+        return padded;
+    }
+
+    /**
      * Extracts a named field value from an hOCR title string.
      * e.g. extractTitleField("bbox 0 0 100 50; x_size 53.0", "x_size") → "53.0"
      * Returns empty string if the field is not present.
@@ -315,7 +342,7 @@ public class OcrProcessor {
     private String runLineOcr(Mat crop, int dpi) {
         logger.info("Running runLineOcr tesseract with {}");
         try {
-            ImageSource.saveImage(crop, new File("build/lineCrop.png"));
+//            ImageSource.saveImage(crop, "lineCrop.png");
             setTessImageParameters(LINE_OCR_API, crop, dpi);
             BytePointer ptr = LINE_OCR_API.GetHOCRText(0);  // hOCR not plain text
             if (ptr == null) return "";
@@ -482,7 +509,9 @@ public class OcrProcessor {
             }
 
             Mat lineCrop = new Mat(source, new Rect(cropOriginX, cropOriginY, cropWidth, cropHeight));
-
+//            Mat lineCrop = addOcrVerticalPadding(preLineCrop);
+//            preLineCrop.release();
+//            ImageSource.saveImage(lineCrop, "lineOcr.png");
             // Step 2 — run fresh Tesseract pass on the crop
             String newHocr = runLineOcr(lineCrop, dpi);
             Document newDoc = Jsoup.parse(newHocr);
@@ -673,9 +702,11 @@ public class OcrProcessor {
 
             if (w <= 0 || h <= 0) continue;
 
-            Mat crop = new Mat(source, new Rect(x, y, w, h));
+            Mat preCrop = new Mat(source, new Rect(x, y, w, h));
+            Mat crop = addOcrVerticalPadding(preCrop);
 
             String clean = runStrummingLineOcr(crop, dpi);
+            preCrop.release();
             crop.release();
 
             if (clean.isEmpty()) {
@@ -800,34 +831,18 @@ public class OcrProcessor {
         MatVector contours = new MatVector();
         StringBuilder result = new StringBuilder();
 
-        // Case #1 to try
-//        // Pre-process: invert so text is white (required for findContours)
-//        threshold(wordCrop, thresh, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
-////        ImageSource.saveImage(thresh, new File("build/thresholdImage.png"));
-//        // Find bounding boxes of all character blobs
-////        findContours(thresh, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-//
-//        Mat kernel = getStructuringElement(MORPH_RECT, new Size(50, 1));
-//        Mat smeared = new Mat();
-//
-//        dilate(thresh, smeared, kernel); // Connects characters into a "strip"
-//
-//        // Find contours of the strips to define your ROIs
-//        findContours(smeared, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-
-
         // Case #2 to try
         adaptiveThreshold(wordCrop, thresh, 255,
                 ADAPTIVE_THRESH_GAUSSIAN_C,
                 THRESH_BINARY_INV,
                 31, 10);
 
-// 2. Smear thresh (not wordCrop) to connect character blobs into strips
+        // 2. Smear thresh (not wordCrop) to connect character blobs into strips
         Mat kernel = getStructuringElement(MORPH_RECT, new Size(50, 1));
         Mat smeared = new Mat();
         dilate(thresh, smeared, kernel);
 
-// 3. Find contours on smeared — each contour is a character group ROI
+        // 3. Find contours on smeared — each contour is a character group ROI
         findContours(smeared, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
         List<Rect> boundingBoxes = new ArrayList<>();
         for (int i = 0; i < contours.size(); i++) {
@@ -847,9 +862,6 @@ public class OcrProcessor {
                 .skip(boundingBoxes.size() / 2)
                 .findFirst()
                 .orElse(20);
-
-
-//        saveDebugImage(thresh, boundingBoxes);
 
 
         // Sort left-to-right — critical for correct chord/stroke ordering
@@ -1260,6 +1272,8 @@ public class OcrProcessor {
         Mat binary = new Mat();
         Mat blurred = new Mat();
 
+        cvtColor(src, gray, COLOR_BGR2GRAY);
+
         // ── Dark-background detection and inversion ───────────────────────────
         //
         // Tesseract expects black text on a white background (THRESH_BINARY).
@@ -1272,7 +1286,7 @@ public class OcrProcessor {
         //
         // meanStdDev on a binary image is either 0 or 255 per pixel, so the mean
         // directly reflects the ratio of white to black pixels.
-        Scalar mean = mean(src);
+        Scalar mean = mean(gray);
         double meanBrightness = mean.get(0);
         logger.info("Binary image mean brightness: {:.1f} — {}",
                 meanBrightness,
@@ -1280,11 +1294,11 @@ public class OcrProcessor {
 
         if (meanBrightness < 128) {
             // Invert: white text on black → black text on white
-            bitwise_not(src, src);
+            bitwise_not(gray, gray);
         }
 
+
         // Case # 1 to try
-        cvtColor(src, gray, COLOR_BGR2GRAY);
         // Just scale up the impage using INTER_LANCZOS4 becareful with the parameters.
         resize(gray, upscaled,
                 new Size((int)(gray.cols() * PREPROCESSING_SCALE), (int)(gray.rows() * PREPROCESSING_SCALE)),

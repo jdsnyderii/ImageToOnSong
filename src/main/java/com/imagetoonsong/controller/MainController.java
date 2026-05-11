@@ -156,7 +156,7 @@ public class MainController {
 
     private void handleChordImage(ImageSource src) {
         imageSource = src;
-        imageSource.saveImage(new File("build/clipboard.png"));
+        imageSource.saveImage("clipboard.png");
         Image image = imageSource.image();
         imageView.setImage(image);
         imageInfoLabel.setText(imageSource.source() + " (" + (int)image.getWidth() + "×" + (int)image.getHeight() + ")");

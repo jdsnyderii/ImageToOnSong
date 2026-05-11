@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.nio.ByteBuffer;
+import java.nio.file.FileSystems;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -121,16 +122,11 @@ public record ImageSource(Image image, int dpi, String source) {
         }
     }
 
-    public void saveImage(File outputFile) {
-        saveImage(image, outputFile);
+    public void saveImage(String outputFileName) {
+        saveImage(image, outputFileName);
     }
 
-    public static void saveImage(Mat originalMat, File outputFile) {
-// Converter for Mat -> Frame
-//        try (OpenCVFrameConverter.ToMat converterToMat = new OpenCVFrameConverter.ToMat(); JavaFXFrameConverter converterToFX = new JavaFXFrameConverter()) {
-//            saveImage(converterToFX.convert(converterToMat.convert(mat)), outputFile);
-//        }
-
+    public static void saveImage(Mat originalMat, String outputFileName) {
         if (originalMat == null || originalMat.empty()) return;
 
         Mat bgrMat = new Mat();
@@ -159,17 +155,17 @@ public record ImageSource(Image image, int dpi, String source) {
                 PixelFormat.getByteRgbInstance(),
                 buffer, stride);
 
-        saveImage(writableImage, outputFile);
+        saveImage(writableImage, outputFileName);
         // Only close bgrMat if it was a temporary conversion
-        if (bgrMat != originalMat) {
-            bgrMat.close();
-        }
+        bgrMat.close();
     }
-    public static void saveImage(Image fxImage, File outputFile) {
+
+
+    public static void saveImage(Image fxImage, String outputFileName) {
         BufferedImage bImage = toBufferedImage(fxImage);
 
+        File outputFile = new File(FileSystems.getDefault().getPath("", outputFileName).toFile().getAbsolutePath());
         try {
-            // ImageIO handles the low-level encoding and headers
             boolean success = ImageIO.write(bImage, "png", outputFile);
 
             if (success) {
@@ -180,6 +176,8 @@ public record ImageSource(Image image, int dpi, String source) {
             }
         } catch (IOException e) {
             logger.error("I/O error while saving image", e);
+        } finally {
+            bImage.flush();
         }
     }
 
@@ -200,7 +198,7 @@ public record ImageSource(Image image, int dpi, String source) {
         SnapshotParameters params = new SnapshotParameters();
         params.setTransform(Transform.scale(1.0, 1.0));
         canvas.snapshot(params, result);
-        saveImage(result, new File("build/afterFlattened.png"));
+        saveImage(result, "afterFlattened.png");
         return result;
     }
 
